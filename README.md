@@ -1,13 +1,13 @@
 ### Getting Started
 Import the library into your project/application
 
-````javascript  
+```javascript  
 const { Pesepay } = require('pesepay');
 ```
 
-Create an instance of the {:.Pesepay } class using your integration key and encryption key as supplied by Pesepay.
+Create an instance of the `Pesepay` class using your integration key and encryption key as supplied by Pesepay.
 
-````javascript 
+```javascript 
 let pesepay = new Pesepay("INTEGRATION KEY", "ENCRYPTION KEY");
 ```
 
@@ -20,20 +20,20 @@ pesepay.returnUrl ='http://example.com/return';
 
 ### Make seamless payment
 
-Create an instance of the {:.CustomerDetails} class passing in the email, phoneNumber and/or name respectively.
+Create an instance of the `CustomerDetails` class passing in the email, phoneNumber and/or name respectively.
 
 ```javascript 
 let customer = new CustomerDetails('example@example.com');
 ```
 
-Create a {:.Map} of the payment required fields and set the required fields.
+Create a `Map` of the payment required fields and set the required fields.
 
 ```javascript
 let requiredFields = new Map<string, string>();
 requiredFields.set('Required field name/key', 'Required field value');
 ```
 
-Create an instance of the {:.PesepaySeamlessTransaction} class passing in the payment reason, currency code, payment method code, customer details and required fields.
+Create an instance of the `PesepaySeamlessTransaction` class passing in the payment reason, currency code, payment method code, customer details and required fields.
 
 ```javascript 
     let transaction = new PesepaySeamlessTransaction('Payment Reason', 'Currency Code', 'Payment Method Code', amount, customer, requiredFields)
