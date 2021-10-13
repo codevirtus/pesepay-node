@@ -36,20 +36,20 @@ requiredFields.set('Required field name/key', 'Required field value');
 Create an instance of the `PesepaySeamlessTransaction` class passing in the payment reason, currency code, payment method code, customer details and required fields.
 
 ```javascript 
-    let transaction = new PesepaySeamlessTransaction('Payment Reason', 'Currency Code', 'Payment Method Code', amount, customer, requiredFields)
+let transaction = new PesepaySeamlessTransaction('Payment Reason', 'Currency Code', 'Payment Method Code', amount, customer, requiredFields)
 ```
 
 Send of the payment to Pesepay
 
 ```javascript 
-    pesepay.makeSeamlessPayment(transaction).then(response => {
-        // Get the link to redirect the user to, then use it as you see fit. Note: The link can be null.
-        let redirectLink = response.redirectUrl;
+pesepay.makeSeamlessPayment(transaction).then(response => {
+    // Get the link to redirect the user to, then use it as you see fit. Note: The link can be null.
+    let redirectLink = response.redirectUrl;
 
-        // // Save poll url (This step is optional)
-        let pollUrl = response.pollUrl;
+    // Save poll url (This step is optional)
+    let pollUrl = response.pollUrl;
 
-    }).catch(err => {
-        // Process error response
-    })
+}).catch(err => {
+    // Process error response
+})
 ```
