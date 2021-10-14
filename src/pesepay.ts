@@ -1,14 +1,12 @@
-import { Cryptography, EncryptionContext } from "./encryption/crypotgraphy";
-import { InvalidRequestError } from "./exceptions/invalid-request-error";
-import { PesepaySeamlessTransaction } from "./payments/pesepay-seamless-transaction";
 import axios from 'axios';
-import { PaymentResponse } from "./payments/payment-response";
-import { AmountDetails } from "./payments/amount-details";
-import { PaymentProcessingContext } from "./payments/payment-processing-context";
-import { CreateTransactionCommand } from "./payments/create-transaction";
+import { Buffer } from 'buffer';
+import crypto, { Cipher } from 'crypto';
+import { Transaction } from "./payments/transaction";
+import { Customer } from "./payments/customer";
+import { Payment } from "./payments/payment";
+import { Amount } from "./payments/amount";
+import { ALGORITHM, CHECK_PAYMENT_URL, MAKE_PAYMENT_URL, MAKE_SEAMLESS_PAYMENT_URL, INITIATE_PAYMENT_URL } from "./constants";
 
-
-const BASE_URL = 'https://api.pesepay.com/api/payments-engine';
 
 export class Pesepay {
 
@@ -24,87 +22,108 @@ export class Pesepay {
         this.headers = { 'key': this.integrationKey }
     }
 
-    initiateTransaction = async(transaction: CreateTransactionCommand): Promise<any> => {
+    initiateTransaction = async(transaction: Transaction): Promise<any> => {
         if (this.resultUrl == null)
-            throw new InvalidRequestError('Result url has not beeen specified.');
+            throw new Error('Result url has not beeen specified.');
 
         if (this.returnUrl == null)
-            throw new InvalidRequestError('Return url has not been specified.');
+            throw new Error('Return url has not been specified.');
 
         transaction.resultUrl = this.resultUrl;
         transaction.returnUrl = this.returnUrl;
 
-        let ecnryptioncontext = new EncryptionContext(JSON.stringify(transaction), this.encryptionKey);
-
-        let payload = Cryptography.encrypt(ecnryptioncontext);
+        let payload = this.payloadEncrypt(JSON.stringify(transaction));
 
         try {
-            let response = await axios.post(`${BASE_URL}/v1/payments/initiate`, { payload }, { headers: this.headers });
-            let decryptionContext = new EncryptionContext(response.data.payload, this.encryptionKey);
-            return JSON.parse(Cryptography.decrypt(decryptionContext));
+            let response = await axios.post(INITIATE_PAYMENT_URL, { payload }, { headers: this.headers });
+            return JSON.parse(this.payloadDecrypt(response.data.payload));
         } catch(error: any) {
             throw new Error(error.response.data.message || 'Something went wrong!');
-        }
-    }
-
-    makePayment = async(paymentProcessing: PaymentProcessingContext): Promise<any> => {
-        let paymentProcessingJson = JSON.parse(JSON.stringify(paymentProcessing));
-
-        let requiredFieldsObject: {[k: string]: string} = {};
-        paymentProcessing.paymentRequestFields?.forEach((v, k) => {
-            requiredFieldsObject[k] = v;
-        });
-
-        paymentProcessingJson.paymentRequestFields = requiredFieldsObject;      
-        
-        let ecnryptioncontext = new EncryptionContext(JSON.stringify(paymentProcessing), this.encryptionKey);
-
-        let payload = Cryptography.encrypt(ecnryptioncontext);
-
-        try {
-            return await axios.post(`${BASE_URL}/v1/payments/make-payment/secure`, { payload }, { headers: this.headers });
-        } catch(error: any) {
-            throw new Error(error.response.data.message || 'Something went wrong!');
-        }
-    }
-
-    makeSeamlessPayment = async(pesepaySeamlessTransaction: PesepaySeamlessTransaction): Promise<PaymentResponse> => {
-        if (this.resultUrl == null)
-            throw new InvalidRequestError('Result url has not beeen specified.');
-        
-        pesepaySeamlessTransaction.resultUrl = this.resultUrl;
-        pesepaySeamlessTransaction.returnUrl = this.returnUrl;
-
-        let transactionJson = JSON.parse(JSON.stringify(pesepaySeamlessTransaction));
-
-        let requiredFieldsObject: {[k: string]: string} = {};
-        pesepaySeamlessTransaction.paymentMethodRequiredFields?.forEach((v, k) => {
-            requiredFieldsObject[k] = v;
-        });
-
-        transactionJson.paymentMethodRequiredFields = requiredFieldsObject;      
-        
-        let ecnryptioncontext = new EncryptionContext(JSON.stringify(transactionJson), this.encryptionKey);
-
-        let payload = Cryptography.encrypt(ecnryptioncontext);
-
-        let response = await axios.post(`${BASE_URL}/v2/payments/make-payment`, { payload }, { headers: this.headers });
-
-        try {
-            let decryptionContext = new EncryptionContext(response.data.payload, this.encryptionKey);
-            return JSON.parse(Cryptography.decrypt(decryptionContext));
-        } catch(error: any) {
-            throw new Error(error.response.data.message || 'Something went wrong!');            
         }
     }
 
     checkPayment = async(referenceNumber: string): Promise<any> => {
         try {
-            let response = await axios.get(`${BASE_URL}/v1/payments/check-payment?referenceNumber=${referenceNumber}`, { headers: this.headers });
-            let decryptContext = new EncryptionContext(response.data['payload'], this.encryptionKey);
-            return JSON.parse(Cryptography.decrypt(decryptContext));
+            let response = await axios.get(`${CHECK_PAYMENT_URL}?referenceNumber=${referenceNumber}`, { headers: this.headers });
+            let payload = response.data['payload'];
+            return JSON.parse(this.payloadDecrypt(payload));
         } catch (error: any) {
             throw new Error(error.response.data.message || 'Something went wrong!');
         }
+    }
+
+    makePayment = async(payment: Payment, referenceNumber: string, requiredFields?: {}, merchantReference?: string): Promise<any> => {
+        payment.referenceNumber = referenceNumber;
+        payment.setRequiredFields({...requiredFields});
+        payment.merchantReference = merchantReference;
+
+        console.log(JSON.stringify(payment));
+        
+        let payload = this.payloadEncrypt(JSON.stringify(payment));
+
+        try {
+            return await axios.post(MAKE_PAYMENT_URL, { payload }, { headers: this.headers });
+        } catch(error: any) {
+            throw new Error(error.response.data.message || 'Something went wrong!');
+        }
+    }
+
+    makeSeamlessPayment = async(payment: Payment, reasonForPayment: string, amount: number, requiredFields?: {}) => {
+        if (this.resultUrl == null)
+            throw new Error('Result url has not beeen specified.');
+        
+        payment.resultUrl = this.resultUrl;
+        payment.returnUrl = this.returnUrl;
+        payment.reasonForPayment = reasonForPayment;
+        payment.amountDetails = new Amount(amount, payment.currencyCode);
+
+        payment.setRequiredFields({...requiredFields});
+
+        console.log(JSON.stringify(payment));
+
+        let payload = this.payloadEncrypt(JSON.stringify(payment));
+
+        let response = await axios.post(MAKE_SEAMLESS_PAYMENT_URL, { payload }, { headers: this.headers });
+
+        try {
+            let payload = response.data.payload;
+            return JSON.parse(this.payloadDecrypt(payload));
+        } catch(error: any) {
+            throw new Error(error.response.data.message || 'Something went wrong!');            
+        }
+    }
+
+    createPayment = (currencyCode: string, paymentMethodCode: string, email?: string, phone?: string, name?: string): Payment => {
+        if (email == null && phone == null)
+            throw new Error('Email and/or phone number should be provided');
+
+        const customer = new Customer(email, phone, name);
+        
+        return new Payment(currencyCode, paymentMethodCode, customer);
+    }
+
+    createTransaction = (appId: number, appCode: string, appName: string, amount: number, 
+        currencyCode: string, paymentReason: string, merchantReference?: string): Transaction => {
+        return new Transaction(appId, appCode, appName, amount, currencyCode, paymentReason, merchantReference);
+    }
+
+    private payloadEncrypt(payload: string) {
+        const cipher = this.buildCipher(this.encryptionKey, "encrypt");
+        return cipher.update(payload, 'utf8', 'base64') + cipher.final('base64');
+    }
+
+    private payloadDecrypt(payload: string) {
+        var cipher = this.buildCipher(this.encryptionKey, "decrypt");
+        return cipher.update(payload, 'base64', 'utf8') + cipher.final('utf8');
+    }
+
+    private buildCipher(key: string, mode: "encrypt" | "decrypt"): Cipher {
+        let iv = Buffer.from(key.substr(0, 16), 'utf8');
+        let keyBuffer = Buffer.from(key, 'utf8');
+        
+        if (mode === "encrypt")
+            return crypto.createCipheriv(ALGORITHM, keyBuffer, iv);
+        else
+            return crypto.createDecipheriv(ALGORITHM, keyBuffer, iv);
     }
 }
