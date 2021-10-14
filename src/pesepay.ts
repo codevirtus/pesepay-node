@@ -8,7 +8,7 @@ import { PaymentProcessingContext } from "./payments/payment-processing-context"
 import { CreateTransactionCommand } from "./payments/create-transaction";
 
 
-const BASE_URL = 'https://api.test.pesepay.com/api/payments-engine';
+const BASE_URL = 'https://api.pesepay.com/api/payments-engine';
 
 export class Pesepay {
 
