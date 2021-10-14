@@ -46,7 +46,7 @@ pesepay.makeSeamlessPayment(transaction).then(response => {
     // Get the link to redirect the user to, then use it as you see fit. Note: The link can be null.
     let redirectLink = response.redirectUrl;
 
-    // // Save poll url (This step is optional)
+    // Save poll url (This step is optional)
     let pollUrl = response.pollUrl;
 
 }).catch(err => {
