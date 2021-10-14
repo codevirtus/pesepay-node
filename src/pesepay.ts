@@ -12,14 +12,16 @@ const BASE_URL = 'https://api.test.pesepay.com/api/payments-engine';
 
 export class Pesepay {
 
-    private integrationKey: string;
-    private encryptionKey: string;
+    private readonly integrationKey: string;
+    private readonly encryptionKey: string;
+    private readonly headers: {};
     public resultUrl?: string;
     public returnUrl?: string;
 
     constructor(integrationKey: string, encryptionKey: string) {
         this.integrationKey = integrationKey;
         this.encryptionKey = encryptionKey;
+        this.headers = { 'key': this.integrationKey }
     }
 
     initiateTransaction = async(applicationId: number, applicationName: string, applicationCode: string, reason: string, amount: number, currencyCode: string, reference?: string): Promise<any> => {
@@ -37,13 +39,13 @@ export class Pesepay {
 
         let payload = Cryptography.encrypt(ecnryptioncontext);
 
-        const headers = {
-            'key': this.integrationKey
+        try {
+            let response = await axios.post(`${BASE_URL}/v1/payments/initiate`, { payload }, { headers: this.headers });
+            let decryptionContext = new EncryptionContext(response.data.payload, this.encryptionKey);
+            return JSON.parse(Cryptography.decrypt(decryptionContext));
+        } catch(error: any) {
+            throw new Error(error.response.data.message || 'Something went wrong!');
         }
-
-        let response = await axios.post(`${BASE_URL}/v1/payments/initiate`, { payload }, { headers: headers });
-        let decryptionContext = new EncryptionContext(response.data.payload, this.encryptionKey);
-        return JSON.parse(Cryptography.decrypt(decryptionContext));
     }
 
     makePayment = async(paymentProcessing: PaymentProcessingContext): Promise<any> => {
@@ -60,11 +62,11 @@ export class Pesepay {
 
         let payload = Cryptography.encrypt(ecnryptioncontext);
 
-        const headers = {
-            'key': this.integrationKey
+        try {
+            return await axios.post(`${BASE_URL}/v1/payments/make-payment/secure`, { payload }, { headers: this.headers });
+        } catch(error: any) {
+            throw new Error(error.response.data.message || 'Something went wrong!');
         }
-
-        return await axios.post(`${BASE_URL}/v1/payments/make-payment/secure`, { payload }, { headers: headers });
     }
 
     makeSeamlessPayment = async(pesepaySeamlessTransaction: PesepaySeamlessTransaction): Promise<PaymentResponse> => {
@@ -87,13 +89,23 @@ export class Pesepay {
 
         let payload = Cryptography.encrypt(ecnryptioncontext);
 
-        const headers = {
-            'key': this.integrationKey
-        }
+        let response = await axios.post(`${BASE_URL}/v2/payments/make-payment`, { payload }, { headers: this.headers });
 
-        let response = await axios.post(`${BASE_URL}/v2/payments/make-payment`, { payload }, { headers: headers });
-        let decryptionContext = new EncryptionContext(response.data.payload, this.encryptionKey);
-        return JSON.parse(Cryptography.decrypt(decryptionContext));
+        try {
+            let decryptionContext = new EncryptionContext(response.data.payload, this.encryptionKey);
+            return JSON.parse(Cryptography.decrypt(decryptionContext));
+        } catch(error: any) {
+            throw new Error(error.response.data.message || 'Something went wrong!');            
+        }
     }
 
+    checkPayment = async(referenceNumber: string): Promise<any> => {
+        try {
+            let response = await axios.get(`${BASE_URL}/v1/payments/check-payment?referenceNumber=${referenceNumber}`, { headers: this.headers });
+            let decryptContext = new EncryptionContext(response.data['payload'], this.encryptionKey);
+            return JSON.parse(Cryptography.decrypt(decryptContext))['transactionStatus']
+        } catch (error: any) {
+            throw new Error(error.response.data.message || 'Something went wrong!');
+        }
+    }
 }
