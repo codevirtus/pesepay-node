@@ -101,9 +101,9 @@ pesepay.makePayment(payment, referenceNumber, requiredFields).then(response => {
 ```js
 pesepay.checkPayment(referenceNumber).then(response => {
 
-    if response.transactionStatus == 'SUCCESS':
+    if (response.transactionStatus == 'SUCCESS') {
         // payment was successful
-    
+    }
 }).catch(error => {
     // Handle error
 });
@@ -112,9 +112,9 @@ pesepay.checkPayment(referenceNumber).then(response => {
 ```js
 pesepay.checkPayment(pollUrl).then(response => {
 
-    if response.transactionStatus == 'SUCCESS':
+    if (response.transactionStatus == 'SUCCESS') {
         // payment was successful
-    
+    }
 }).catch(error => {
     // Handle error
 });
