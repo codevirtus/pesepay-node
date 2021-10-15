@@ -1,8 +1,13 @@
-## Getting Started
+### Installation
+```shell
+npm install pesepay
+```
+
+### Getting Started
 Import the library into your project/application
 
 ```js  
-const { Pesepay } = require('pesepay');
+const { Pesepay } = require('pesepay')
 ```
 
 Create an instance of the `Pesepay` class using your integration key and encryption key as supplied by Pesepay.
@@ -14,111 +19,103 @@ const pesepay = new Pesepay("INTEGRATION KEY", "ENCRYPTION KEY");
 Set return and result urls
 
 ```js 
-pesepay.resultUrl ='http://example.com/result';
-pesepay.returnUrl ='http://example.com/return';
+pesepay.resultUrl = 'https://example.com/result'
+pesepay.returnUrl = 'https://example.com/return'
 ```
 
-## Make seamless payment
+### Make seamless payment
 
-Create an instance of the `CustomerDetails` class passing in the email, phoneNumber and/or name respectively.
-
-```js 
-const customer = new CustomerDetails('example@example.com');
-```
-
-Create a `Map` of the payment required fields and set the required fields.
+Create the payment 
+##### NB: Customer email or number should be provided
 
 ```js
-let requiredFields = new Map<string, string>();
-requiredFields.set('Required field name/key', 'Required field value');
+const payment = pesepay.createPayment('CURRECNCY_CODE', 'PAYMENT_METHOD_CODE', 'CUSTOMER_EMAIL(OPTIONAL)', 'CUSTOMER_PHONE_NUMBER(OPTIONAL)', 'CUSTOMER_NAME(OPTIONAL)')
 ```
 
-Create an instance of the `PesepaySeamlessTransaction` class passing in the payment reason, currency code, payment method code, customer details and required fields.
-
-```js 
-const transaction = new PesepaySeamlessTransaction('Payment Reason', 'Currency Code', 'Payment Method Code', amount, customer, requiredFields)
+Create an `object` of the required fields (if any)
+```js
+const requiredFields = {'requiredFieldName': 'requiredFieldValue'}
 ```
 
-Send of the payment to Pesepay
-
-```js 
-pesepay.makeSeamlessPayment(transaction).then(response => {
-    // Get the link to redirect the user to, then use it as you see fit. Note: The link can be null.
-    const redirectLink = response.redirectUrl;
-
-    // Save referenceNumber (This step is optional)
-    const referenceNumber = response.referenceNumber;
+Send of the payment
+```js
+pesepay.makeSeamlessPayment(payment, 'PAYMENT_REASON', AMOUNT, requiredFields).then(response => {
+    // Save the poll url and reference number (used to check the status of a transaction)
+    const pollUrl = response.pollUrl;
+    const referenceNumber = response.referenceNumber
 
 }).catch(err => {
-    // Handle error response
-})
-```
-
-## Initiate transaction
-
-Create an instance of the `CreateTransactionCommand` class passing it your application id, application code, application name, transaction amount, currency code and reason for payment.
-
-```js
-const transaction = new CreateTransactionCommand('APP_ID', 'APP_CODE', 'APP_NAME', AMOUNT, 'CURRENCY_CODE', 'REASON_FOR_PAYMENT');
-```
-
-Invoke the `initiateTransaction()` method to send of the transaction
-
-```js
-pesepay.initiateTransaction(transaction).then(res => {
-    // Save reference number
-    const referenceNumber = res.referenceNumber;        
-    
-    // Get redirect url and redirect user to complete transaction if no custom payment page available
-    const redirectUrl = res.redirectUrl;       
-
-}).catch(error => {
-    // Handle error response                
-})
-```
-
-## Make payment 
-
-Create an instance of the `CustomerDetails` class passing in the email, phoneNumber and/or name respectively.
-
-```js 
-const customer = new CustomerDetails('example@example.com');
-```
-
-Create a `Map` of the payment required fields and set the required fields (if any).
-
-```js
-let requiredFields = new Map<string, string>();
-requiredFields.set('Required field name/key', 'Required field value');
-```
-
-Create an instance of the `PaymentProcessingContext` class passing in the referenceNumber, currencyCode, paymentMethodCode, and customerDetails.
-
-```js
-const payment = new PaymentProcessingContext(referenceNumber, 'ZWL', 'PZW201', customer);
-```
-
-Send of the payment to Pesepay for processing
-
-```js
-pesepay.makePayment(payment).then(res => {
-    // Save the reference number
-    const referenceNumber = res.referenceNumber;   
-}).catch(err => {
-    // Handle error response        
+    // Handle error
 });
 ```
 
-## Check Payment 
+### Make payment
+#### Step 1: Initiate a transaction
 
-Invoke the `checkPayment()` method passing in the reference number
-
+Create a transaction
 ```js
-pesepay.checkPayment('20211014121606536-FD119981').then(res => {
-   // Get the status        
-   const status = res.transactionStatus;
+const transaction = pesepay.createTransaction('APP_ID', 'APP_CODE','APP_CODE', amount, 'CURRENCY_CODE', 'PAYMENT_REASON')
+```
+
+Initiate the transaction
+```js
+pesepay.initiateTransaction(transaction).then(response => {
+    // Get the redirect url and use it as you see fit     
+    redirectUrl = response.redirectUrl
+    // Save the reference number (used to check the status of a transaction and to make the payment)
+    referenceNumber = response.referenceNumber
 
 }).catch(error => {
-   // Handle error response
-})
+    // Handle error
+});
+```
+
+#### Step 2: Make the payment
+
+Create the payment 
+##### NB: Customer email or number should be provided
+
+```js
+const payment = pesepay.createPayment('CURRECNCY_CODE', 'PAYMENT_METHOD_CODE', 'CUSTOMER_EMAIL(OPTIONAL)', 'CUSTOMER_PHONE_NUMBER(OPTIONAL)', 'CUSTOMER_NAME(OPTIONAL)')
+```
+
+Create a `object` of the required fields (if any)
+
+```js
+const requiredFields = {'requiredFieldName': 'requiredFieldValue'}
+```
+
+Send of the payment
+```js
+pesepay.makePayment(payment, referenceNumber, requiredFields).then(response => {
+    // Save the poll url (used to check the status of a transaction)
+    const pollUrl = response.pollUrl
+
+}).catch(err => {
+    // Handle error
+});
+```
+
+### Check Payment Status
+#### Method 1: Check using reference number
+```js
+pesepay.checkPayment(referenceNumber).then(response => {
+
+    if response.transactionStatus == 'SUCCESS':
+        // payment was successful
+    
+}).catch(error => {
+    // Handle error
+});
+```
+#### Method 2: Check using poll url
+```js
+pesepay.checkPayment(pollUrl).then(response => {
+
+    if response.transactionStatus == 'SUCCESS':
+        // payment was successful
+    
+}).catch(error => {
+    // Handle error
+});
 ```

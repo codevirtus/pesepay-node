@@ -2,17 +2,19 @@
   "name": "pesepay",
   "version": "1.0.0",
   "description": "Pesepay payment gateway integration package",
-  "main": "lib/index.js",
-  "types": "lib",
+  "main": "dist/pesepay.js",
+  "types": "dist",
   "scripts": {
     "build": "tsc -p ."
   },
   "author": "Sean P T Huvaya",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
+    "axios": "^0.22.0"
+  },
+  "devDependencies": {
     "@types/axios": "^0.14.0",
     "@types/buffers": "^0.1.31",
-    "@types/crypto-js": "^4.0.2",
-    "axios": "^0.22.0"
+    "@types/crypto-js": "^4.0.2"
   }
 }
