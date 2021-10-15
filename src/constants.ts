@@ -1,7 +1,7 @@
 /**
  * Base Url for the payment gateway
  */
- export const BASE_URL = 'https://api.test.pesepay.com/api/payments-engine';
+ export const BASE_URL = 'https://api.pesepay.com/api/payments-engine';
 
 /**
  * Check payment status API endpoint

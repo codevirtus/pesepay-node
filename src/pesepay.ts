@@ -43,8 +43,13 @@ export class Pesepay {
     }
 
     checkPayment = async(referenceNumber: string): Promise<any> => {
+        const url = `${CHECK_PAYMENT_URL}?referenceNumber=${referenceNumber}`
+        return this.pollTransaction(url)
+    }
+
+    pollTransaction = async(pollUrl: string): Promise<any> => {
         try {
-            let response = await axios.get(`${CHECK_PAYMENT_URL}?referenceNumber=${referenceNumber}`, { headers: this.headers });
+            let response = await axios.get(pollUrl, { headers: this.headers });
             let payload = response.data['payload'];
             return JSON.parse(this.payloadDecrypt(payload));
         } catch (error: any) {
