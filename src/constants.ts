@@ -14,11 +14,6 @@
  export const MAKE_SEAMLESS_PAYMENT_URL = `${BASE_URL}/v2/payments/make-payment`;
 
 /**
- * Make payment API endpoint
- */
- export const MAKE_PAYMENT_URL = `${BASE_URL}/v1/payments/make-payment/secure`;
-
-/**
  * Initiate payment API Endpoint
  */
  export const INITIATE_PAYMENT_URL = `${BASE_URL}/v1/payments/initiate`;

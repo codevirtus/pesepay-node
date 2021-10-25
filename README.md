@@ -40,59 +40,39 @@ const requiredFields = {'requiredFieldName': 'requiredFieldValue'}
 Send of the payment
 ```js
 pesepay.makeSeamlessPayment(payment, 'PAYMENT_REASON', AMOUNT, requiredFields).then(response => {
-    // Save the poll url and reference number (used to check the status of a transaction)
-    const pollUrl = response.pollUrl;
-    const referenceNumber = response.referenceNumber
+    if (response.success) {
+        // Save the reference number and/or poll url (used to check the status of a transaction)
+        const referenceNumber = response.referenceNumber;
+        const pollUrl = response.pollUrl
 
-}).catch(err => {
-    // Handle error
+    } else {
+        // Get Error Message  
+        const message = res.message;
+    }
 });
 ```
 
-### Make payment
-#### Step 1: Initiate a transaction
-
+### Make redirect payment
 Create a transaction
 ```js
-const transaction = pesepay.createTransaction('APP_ID', 'APP_CODE','APP_CODE', amount, 'CURRENCY_CODE', 'PAYMENT_REASON')
+const transaction = pesepay.createTransaction(amount, 'CURRENCY_CODE', 'PAYMENT_REASON')
 ```
 
 Initiate the transaction
 ```js
 pesepay.initiateTransaction(transaction).then(response => {
-    // Get the redirect url and use it as you see fit     
-    redirectUrl = response.redirectUrl
-    // Save the reference number (used to check the status of a transaction and to make the payment)
-    referenceNumber = response.referenceNumber
+    if (response.success) {
+        // Save the reference number and/or poll url (used to check the status of a transaction)
+        const referenceNumber = response.referenceNumber;
+        const pollUrl = response.pollUrl
 
-}).catch(error => {
-    // Handle error
-});
-```
+        // Get the redirect url and redirect user to complete transaction 
+        const redirectUrl = response.redirectUrl
 
-#### Step 2: Make the payment
-
-Create the payment 
-##### NB: Customer email or number should be provided
-
-```js
-const payment = pesepay.createPayment('CURRECNCY_CODE', 'PAYMENT_METHOD_CODE', 'CUSTOMER_EMAIL(OPTIONAL)', 'CUSTOMER_PHONE_NUMBER(OPTIONAL)', 'CUSTOMER_NAME(OPTIONAL)')
-```
-
-Create a `object` of the required fields (if any)
-
-```js
-const requiredFields = {'requiredFieldName': 'requiredFieldValue'}
-```
-
-Send of the payment
-```js
-pesepay.makePayment(payment, referenceNumber, requiredFields).then(response => {
-    // Save the poll url (used to check the status of a transaction)
-    const pollUrl = response.pollUrl
-
-}).catch(err => {
-    // Handle error
+    } else {
+        // Get Error Message  
+        const message = res.message;
+    }
 });
 ```
 
@@ -100,22 +80,26 @@ pesepay.makePayment(payment, referenceNumber, requiredFields).then(response => {
 #### Method 1: Check using reference number
 ```js
 pesepay.checkPayment(referenceNumber).then(response => {
-
-    if (response.transactionStatus == 'SUCCESS') {
-        // payment was successful
+    if (response.success) {
+        if (response.paid) {
+            // Payment was successful
+        }
+    } else {
+        // Get Error Message  
+        const message = res.message;
     }
-}).catch(error => {
-    // Handle error
 });
 ```
 #### Method 2: Check using poll url
 ```js
-pesepay.checkPayment(pollUrl).then(response => {
-
-    if (response.transactionStatus == 'SUCCESS') {
-        // payment was successful
+pesepay.pollTransaction(pollUrl).then(response => {
+    if (response.success) {
+        if (response.paid) {
+            // Payment was successful
+        }
+    } else {
+        // Get Error Message  
+        const message = res.message;
     }
-}).catch(error => {
-    // Handle error
 });
 ```

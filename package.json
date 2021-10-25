@@ -1,6 +1,6 @@
 {
   "name": "pesepay",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "Pesepay payment gateway integration package",
   "main": "dist/pesepay.js",
   "types": "dist",

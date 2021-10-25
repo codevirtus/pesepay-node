@@ -5,7 +5,8 @@ import { Transaction } from "./payments/transaction";
 import { Customer } from "./payments/customer";
 import { Payment } from "./payments/payment";
 import { Amount } from "./payments/amount";
-import { ALGORITHM, CHECK_PAYMENT_URL, MAKE_PAYMENT_URL, MAKE_SEAMLESS_PAYMENT_URL, INITIATE_PAYMENT_URL } from "./constants";
+import { PesepayResponse } from './response';
+import { ALGORITHM, CHECK_PAYMENT_URL, MAKE_SEAMLESS_PAYMENT_URL, INITIATE_PAYMENT_URL } from "./constants";
 
 
 export class Pesepay {
@@ -22,7 +23,7 @@ export class Pesepay {
         this.headers = { 'key': this.integrationKey }
     }
 
-    initiateTransaction = async(transaction: Transaction): Promise<any> => {
+    initiateTransaction = async(transaction: Transaction): Promise<PesepayResponse> => {
         if (this.resultUrl == null)
             throw new Error('Result url has not beeen specified.');
 
@@ -35,45 +36,34 @@ export class Pesepay {
         let payload = this.payloadEncrypt(JSON.stringify(transaction));
 
         try {
-            let response = await axios.post(INITIATE_PAYMENT_URL, { payload }, { headers: this.headers });
-            return JSON.parse(this.payloadDecrypt(response.data.payload));
+            const response = await axios.post(INITIATE_PAYMENT_URL, { payload }, { headers: this.headers });
+            const resObj = JSON.parse(this.payloadDecrypt(response.data.payload));
+            return new PesepayResponse(true, undefined, resObj.referenceNumber, resObj.pollUrl, resObj.redirectUrl);
         } catch(error: any) {
-            throw new Error(error.response.data.message || 'Something went wrong!');
+            const message = error.response.data.message || 'Something went wrong!';
+            return new PesepayResponse(false, message);
         }
     }
 
-    checkPayment = async(referenceNumber: string): Promise<any> => {
+    checkPayment = async(referenceNumber: string): Promise<PesepayResponse> => {
         const url = `${CHECK_PAYMENT_URL}?referenceNumber=${referenceNumber}`
         return this.pollTransaction(url)
     }
 
-    pollTransaction = async(pollUrl: string): Promise<any> => {
+    pollTransaction = async(pollUrl: string): Promise<PesepayResponse> => {
         try {
             let response = await axios.get(pollUrl, { headers: this.headers });
             let payload = response.data['payload'];
-            return JSON.parse(this.payloadDecrypt(payload));
+            const resObj = JSON.parse(this.payloadDecrypt(payload)); 
+            const paid = resObj.transactionStatus == 'SUCCESS';
+            return new PesepayResponse(true, undefined, resObj.referenceNumber, resObj.pollUrl, resObj.redirectUrl, paid);
         } catch (error: any) {
-            throw new Error(error.response.data.message || 'Something went wrong!');
+            const message = error.response.data.message || 'Something went wrong!';
+            return new PesepayResponse(false, message);
         }
     }
 
-    makePayment = async(payment: Payment, referenceNumber: string, requiredFields?: {}, merchantReference?: string): Promise<any> => {
-        payment.referenceNumber = referenceNumber;
-        payment.setRequiredFields({...requiredFields});
-        payment.merchantReference = merchantReference;
-
-        console.log(JSON.stringify(payment));
-        
-        let payload = this.payloadEncrypt(JSON.stringify(payment));
-
-        try {
-            return await axios.post(MAKE_PAYMENT_URL, { payload }, { headers: this.headers });
-        } catch(error: any) {
-            throw new Error(error.response.data.message || 'Something went wrong!');
-        }
-    }
-
-    makeSeamlessPayment = async(payment: Payment, reasonForPayment: string, amount: number, requiredFields?: {}) => {
+    makeSeamlessPayment = async(payment: Payment, reasonForPayment: string, amount: number, requiredFields?: {}): Promise<PesepayResponse> => {
         if (this.resultUrl == null)
             throw new Error('Result url has not beeen specified.');
         
@@ -84,17 +74,16 @@ export class Pesepay {
 
         payment.setRequiredFields({...requiredFields});
 
-        console.log(JSON.stringify(payment));
-
         let payload = this.payloadEncrypt(JSON.stringify(payment));
 
-        let response = await axios.post(MAKE_SEAMLESS_PAYMENT_URL, { payload }, { headers: this.headers });
-
         try {
-            let payload = response.data.payload;
-            return JSON.parse(this.payloadDecrypt(payload));
+            let response = await axios.post(MAKE_SEAMLESS_PAYMENT_URL, { payload }, { headers: this.headers });
+            const resObj = JSON.parse(this.payloadDecrypt(response.data.payload));            
+            const paid = resObj.transactionStatus == 'SUCCESS';
+            return new PesepayResponse(true, undefined, resObj.referenceNumber, resObj.pollUrl, resObj.redirectUrl, paid);
         } catch(error: any) {
-            throw new Error(error.response.data.message || 'Something went wrong!');            
+            const message = error.response.data.message || 'Something went wrong!';
+            return new PesepayResponse(false, message);          
         }
     }
 
@@ -107,9 +96,8 @@ export class Pesepay {
         return new Payment(currencyCode, paymentMethodCode, customer);
     }
 
-    createTransaction = (appId: number, appCode: string, appName: string, amount: number, 
-        currencyCode: string, paymentReason: string, merchantReference?: string): Transaction => {
-        return new Transaction(appId, appCode, appName, amount, currencyCode, paymentReason, merchantReference);
+    createTransaction = (amount: number, currencyCode: string, paymentReason: string, merchantReference?: string): Transaction => {
+        return new Transaction(amount, currencyCode, paymentReason, merchantReference);
     }
 
     private payloadEncrypt(payload: string) {
