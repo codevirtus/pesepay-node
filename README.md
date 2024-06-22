@@ -28,6 +28,14 @@ pesepay.returnUrl = 'https://example.com/return'
 Create the payment 
 ##### NB: Customer email or number should be provided
 
+Obtain active currency codes from this api
+
+https://api.pesepay.com/api/payments-engine/v1/currencies/active
+
+obtain active payment methods for desired currency from this api
+https://api.pesepay.com/api/payments-engine/v1/payment-methods/for-currency?currencyCode={CURRECNCY_CODE}
+
+
 ```js
 const payment = pesepay.createPayment('CURRECNCY_CODE', 'PAYMENT_METHOD_CODE', 'CUSTOMER_EMAIL(OPTIONAL)', 'CUSTOMER_PHONE_NUMBER(OPTIONAL)', 'CUSTOMER_NAME(OPTIONAL)')
 ```
