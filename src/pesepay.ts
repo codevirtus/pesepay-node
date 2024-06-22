@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { Buffer } from 'buffer';
-import crypto, { Cipher } from 'crypto';
+import { Cipher,createCipheriv,createDecipheriv} from 'crypto';
 import { Transaction } from "./payments/transaction";
 import { Customer } from "./payments/customer";
 import { Payment } from "./payments/payment";
@@ -20,10 +20,11 @@ export class Pesepay {
     constructor(integrationKey: string, encryptionKey: string) {
         this.integrationKey = integrationKey;
         this.encryptionKey = encryptionKey;
-        this.headers = { 'key': this.integrationKey }
+        this.headers = { 'key': this.integrationKey,  'Content-Type': 'application/json' }
     }
 
     initiateTransaction = async(transaction: Transaction): Promise<PesepayResponse> => {
+      
         if (this.resultUrl == null)
             throw new Error('Result url has not beeen specified.');
 
@@ -32,15 +33,13 @@ export class Pesepay {
 
         transaction.resultUrl = this.resultUrl;
         transaction.returnUrl = this.returnUrl;
-
         let payload = this.payloadEncrypt(JSON.stringify(transaction));
-
         try {
-            const response = await axios.post(INITIATE_PAYMENT_URL, { payload }, { headers: this.headers });
+            const response = await axios.post(INITIATE_PAYMENT_URL, { payload }, { headers: this.headers, insecureHTTPParser:true });
             const resObj = JSON.parse(this.payloadDecrypt(response.data.payload));
             return new PesepayResponse(true, undefined, resObj.referenceNumber, resObj.pollUrl, resObj.redirectUrl);
         } catch(error: any) {
-            const message = error.response.data.message || 'Something went wrong!';
+            const message = error.message ?? 'Something went wrong!';
             return new PesepayResponse(false, message);
         }
     }
@@ -52,13 +51,13 @@ export class Pesepay {
 
     pollTransaction = async(pollUrl: string): Promise<PesepayResponse> => {
         try {
-            let response = await axios.get(pollUrl, { headers: this.headers });
+            let response = await axios.get(pollUrl, { headers: this.headers , insecureHTTPParser:true});
             let payload = response.data['payload'];
             const resObj = JSON.parse(this.payloadDecrypt(payload)); 
             const paid = resObj.transactionStatus == 'SUCCESS';
             return new PesepayResponse(true, undefined, resObj.referenceNumber, resObj.pollUrl, resObj.redirectUrl, paid);
         } catch (error: any) {
-            const message = error.response.data.message || 'Something went wrong!';
+            const message = error.message ?? 'Something went wrong!';
             return new PesepayResponse(false, message);
         }
     }
@@ -77,12 +76,12 @@ export class Pesepay {
         let payload = this.payloadEncrypt(JSON.stringify(payment));
 
         try {
-            let response = await axios.post(MAKE_SEAMLESS_PAYMENT_URL, { payload }, { headers: this.headers });
+            let response = await axios.post(MAKE_SEAMLESS_PAYMENT_URL, { payload }, { headers: this.headers, insecureHTTPParser:true });
             const resObj = JSON.parse(this.payloadDecrypt(response.data.payload));            
             const paid = resObj.transactionStatus == 'SUCCESS';
             return new PesepayResponse(true, undefined, resObj.referenceNumber, resObj.pollUrl, resObj.redirectUrl, paid);
         } catch(error: any) {
-            const message = error.response.data.message || 'Something went wrong!';
+            const message = error.message ?? 'Something went wrong!';
             return new PesepayResponse(false, message);          
         }
     }
@@ -115,8 +114,8 @@ export class Pesepay {
         let keyBuffer = Buffer.from(key, 'utf8');
         
         if (mode === "encrypt")
-            return crypto.createCipheriv(ALGORITHM, keyBuffer, iv);
+            return createCipheriv(ALGORITHM, keyBuffer, iv);
         else
-            return crypto.createDecipheriv(ALGORITHM, keyBuffer, iv);
+            return createDecipheriv(ALGORITHM, keyBuffer, iv);
     }
 }
