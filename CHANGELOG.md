@@ -139,6 +139,10 @@ See [MIGRATION.md](MIGRATION.md).
   loopback.
 - Raw AES helpers (`encryptPayload`, `decryptPayload`) are not exported. Raw
   AES-256-CBC with no integrity protection is not a primitive to hand out.
+- **Published from CI through npm Trusted Publishing**, with no long-lived
+  token anywhere. Every 2.x tarball carries a provenance attestation linking it
+  to the commit and the workflow run that built it; `npm audit signatures`
+  verifies it.
 - The `insecureHTTPParser` fallback is opt-out
   (`createHttpsTransport({ allowInsecureHttpParserFallback: false })`) and warns
   once per process when it is used.
