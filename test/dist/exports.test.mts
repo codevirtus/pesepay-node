@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { describe, it } from 'node:test';
+import { PUBLIC_TYPES, PUBLIC_VALUES, V1_COMPAT_VALUES } from '../fixtures/public-api.mts';
 
 const require_ = createRequire(import.meta.url);
 const read = (p: string): string => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8');
@@ -38,82 +39,6 @@ const declarationsOf = (p: string): string => read(p).replace(/\/\*[\s\S]*?\*\//
  * run only after `npm run build`.
  */
 const distUrl = (p: string): string => new URL(`../../dist/${p}`, import.meta.url).href;
-
-/** Values the README documents. Every one must exist in both flavours. */
-const PUBLIC_VALUES = [
-  'DEFAULT_BASE_URL',
-  'DEFAULT_TIMEOUT_MS',
-  'NON_TERMINAL_TRANSACTION_STATUSES',
-  'Pesepay',
-  'PesepayApiError',
-  'PesepayAuthError',
-  'PesepayConfigError',
-  'PesepayCryptoError',
-  'PesepayError',
-  'PesepayNetworkError',
-  'PesepayTimeoutError',
-  'TERMINAL_TRANSACTION_STATUSES',
-  'TRANSACTION_STATUS_CODES',
-  'TRANSACTION_STATUS_DESCRIPTIONS',
-  'TransactionStatus',
-  'VERSION',
-  'createHttpsTransport',
-  'httpsTransport',
-  'isPaid',
-  'isTerminal',
-  'isTransactionStatus',
-] as const;
-
-/** Types the README documents. Declarations are the API reference for these. */
-const PUBLIC_TYPES = [
-  'AmountDetails',
-  'CallbackHeaders',
-  'CallbackKeyStatus',
-  'CallbackVerification',
-  'Currency',
-  'CustomerDetails',
-  'HttpsTransportOptions',
-  'InitiateInvoiceOptions',
-  'InitiateTransactionOptions',
-  'InitiateTransactionResponse',
-  'Invoice',
-  'InvoicePayer',
-  'InvoiceResult',
-  'InvoiceStatus',
-  'PaymentMethod',
-  'PaymentResult',
-  'PaymentTransactionResult',
-  'PesepayApiErrorInit',
-  'PesepayErrorBody',
-  'PesepayErrorCode',
-  'PesepayOptions',
-  'RecurringFrequency',
-  'RequiredField',
-  'RequiredFieldType',
-  'SeamlessPaymentOptions',
-  'SplitReversalResponse',
-  'TransactionType',
-  'Transport',
-  'TransportMethod',
-  'TransportRequest',
-  'TransportResponse',
-] as const;
-
-/** v1's surface, as `pesepay/v1-compat` must present it. */
-const V1_COMPAT_VALUES = [
-  'ALGORITHM',
-  'Amount',
-  'BASE_URL',
-  'CHECK_PAYMENT_URL',
-  'Customer',
-  'INITIATE_PAYMENT_URL',
-  'MAKE_SEAMLESS_PAYMENT_URL',
-  'Payment',
-  'Pesepay',
-  'PesepayResponse',
-  'Transaction',
-  'V1_COMPAT',
-] as const;
 
 // biome-ignore lint/suspicious/noExplicitAny: a runtime-built specifier gives `any`.
 const loadEsm = (p: string): Promise<any> => import(distUrl(p));
