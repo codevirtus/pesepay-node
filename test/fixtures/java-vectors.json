@@ -10,7 +10,7 @@
     "javaVersion": "21.0.11",
     "javaVendor": "Eclipse Adoptium",
     "fileEncoding": "UTF-8",
-    "generatedAt": "2026-09-11T10:37:37.898191800Z"
+    "generatedAt": "2026-09-11T10:48:11.035573600Z"
   },
   "algorithm": {
     "transformation": "AES/CBC/PKCS5PADDING",
@@ -50,7 +50,7 @@
     },
     {
       "name": "exact-one-block",
-      "note": "Exactly 16 bytes. PKCS#7 must append a WHOLE extra block of 0x10 bytes; an implementation that pads only when there is a remainder produces 16 bytes of ciphertext here instead of 32.",
+      "note": "Exactly 16 bytes. PKCS#7 must append a WHOLE extra block, so an implementation that pads only on a remainder yields 16 bytes here, not 32.",
       "key": "3d2f8c1a4b6e7f905a1c2d3e4f506172",
       "plaintext": "0123456789abcdef",
       "plaintextByteLength": 16,
@@ -86,7 +86,7 @@
     },
     {
       "name": "non-ascii-plaintext",
-      "note": "Multi-byte UTF-8 in the PLAINTEXT is fine - both sides encode UTF-8. Only the KEY must be ASCII, because Java derives the IV by chars and Node by bytes.",
+      "note": "Multi-byte UTF-8 in the PLAINTEXT is fine; only the KEY must be ASCII, because Java derives the IV by chars and Node by bytes.",
       "key": "3d2f8c1a4b6e7f905a1c2d3e4f506172",
       "plaintext": "{\"name\":\"Tafadzwa M\u00fcller\",\"note\":\"paid \u2014 \u2713 \u20ac10\"}",
       "plaintextByteLength": 55,
@@ -113,7 +113,7 @@
     }
   ],
   "tampered": {
-    "note": "Last ciphertext byte flipped. Decryption must THROW on the PKCS#7 padding check, never return garbage - a payments SDK that silently accepts a mangled transactionStatus is worse than one that fails loudly.",
+    "note": "Last ciphertext byte flipped. Decryption must THROW on the PKCS#7 padding check, never return garbage.",
     "key": "3d2f8c1a4b6e7f905a1c2d3e4f506172",
     "originalPlaintext": "{\"transactionStatus\":\"FAILED\"}",
     "validCiphertextBase64": "XDQNjWzLgtJN86LGVci6DoaunQ5Tw61ZOoBiRAe4c6I=",

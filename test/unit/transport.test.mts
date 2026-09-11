@@ -1,19 +1,13 @@
 /**
- * The strict → lenient HTTP parser fallback.
+ * The strict → lenient HTTP parser fallback, against a raw `node:net` server
+ * emitting the byte-exact bare-LF header block production sends.
  *
- * All four cases the plan calls for, against a raw `node:net` server emitting
- * the byte-exact bare-LF header block production sends:
- *
- * 1. **Premise guard** — Node's strict parser really does reject that block.
- *    Without this the whole workaround rests on an assumption nobody rechecks,
- *    and the day `llhttp` relaxes, this test tells you the code can go.
- * 2. **Negative control** — a well-formed response must *not* trigger the
- *    retry. Without it, an implementation that simply sets
- *    `insecureHTTPParser: true` on every request passes every other test here.
- * 3. **Warn once** — three calls, one warning.
- * 4. **Body replay** — the retry must resend the body. This is the likeliest
- *    real bug in the path, and the gateway's response to a silently empty body
- *    looks nothing like a parser problem.
+ * Four cases carry the weight: a **premise guard** that Node's strict parser
+ * really does reject that block (so the workaround can be retired when llhttp
+ * relaxes), a **negative control** that a well-formed response does not trigger
+ * the retry (without it, an implementation that always sets
+ * `insecureHTTPParser` passes everything else here), **warn-once** across three
+ * calls, and **body replay** on the retry.
  */
 import assert from 'node:assert/strict';
 import { request as httpRequest } from 'node:http';
@@ -62,8 +56,7 @@ async function withCapturedWarnings<T>(
 
 describe('transport — premise guard', () => {
   it("Node's strict parser still rejects a bare LF in the header block", async () => {
-    // The reason the fallback exists. If this ever fails, llhttp has relaxed
-    // and the retry, the warning and this whole file can be deleted.
+    // If this ever fails, llhttp has relaxed and the workaround can go.
     const server = await serve(() => malformedResponse(BODY));
 
     const error = await new Promise<NodeJS.ErrnoException>((resolve, reject) => {
@@ -79,7 +72,7 @@ describe('transport — premise guard', () => {
 
   it('accepts the same response once the parser is relaxed', async () => {
     // Proves the fixture is malformed in exactly the way the lenient parser
-    // forgives, rather than broken in some other way.
+    // forgives, not broken some other way.
     const server = await serve(() => malformedResponse(BODY));
 
     const status = await new Promise<number>((resolve, reject) => {
@@ -120,8 +113,6 @@ describe('transport — fallback behaviour', () => {
   });
 
   it('does NOT relax the parser for a well-formed response', async () => {
-    // The negative control. An implementation that always sets
-    // insecureHTTPParser passes every other test in this file.
     const server = await serve(() => wellFormedResponse(BODY));
     const send = transport.createHttpsTransport();
 
@@ -162,9 +153,8 @@ describe('transport — fallback behaviour', () => {
   });
 
   it('replays the request body on the retry', async () => {
-    // The bug this catches: an implementation that consumes a stream on the
-    // first attempt and sends an empty body on the second. The gateway answers
-    // that with a validation error that looks nothing like a parser problem.
+    // Catches an implementation that drains a stream on the first attempt and
+    // sends an empty body on the second.
     const requestBody = JSON.stringify({ payload: 'Zm9vYmFy'.repeat(40) });
     const server = await serve(() => malformedResponse(BODY));
     const send = transport.createHttpsTransport();

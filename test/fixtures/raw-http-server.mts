@@ -1,29 +1,21 @@
 /**
- * A raw `node:net` server that speaks HTTP one byte at a time.
+ * A raw `node:net` server that speaks HTTP as explicit bytes.
  *
- * `node:http` cannot produce the response this suite needs: it writes a
- * correct header block, and the whole point is a header block that is
- * *incorrect* in one specific way. So the response is assembled as an explicit
- * byte string and written to the socket.
- *
- * The malformed shape reproduced here is production's, not an invention — see
- * `src/internal/transport.ts` for the raw TLS dump this came from.
+ * `node:http` cannot produce what this suite needs: it always writes a correct
+ * header block, and the whole point is one that is incorrect in a specific way.
  */
 
 import type { Server, Socket } from 'node:net';
 import { createServer } from 'node:net';
 
-/** One request as the raw server saw it, headers and body kept separate. */
 export interface CapturedRequest {
   /** The request line and headers, verbatim. */
   head: string;
-  /** The request body, decoded as UTF-8. Empty string when there was none. */
+  /** Empty string when there was no body. */
   body: string;
-  /** The HTTP method, taken from the request line. */
   method: string;
 }
 
-/** A running raw server plus everything a test needs to assert against it. */
 export interface RawHttpServer {
   /** `http://127.0.0.1:<port>` — loopback, which the transport permits. */
   origin: string;
@@ -35,13 +27,10 @@ export interface RawHttpServer {
 /**
  * A byte-exact reproduction of the header block `api.pesepay.com` emits.
  *
- * Note the lone `\n` after `max-age=31536000;` where HTTP/1.1 requires
- * `\r\n`. That single byte is the entire bug: `llhttp` reports
- * `HPE_CR_EXPECTED` and undici reports "Missing expected CR after header
- * value", and every strict client in every language fails on it.
- *
- * Written as explicit escapes rather than a template literal so that an editor
- * or a `.gitattributes` line-ending rule cannot quietly repair it.
+ * Note the lone `\n` after `max-age=31536000;` where HTTP/1.1 requires `\r\n`.
+ * That single byte is the entire bug: llhttp reports `HPE_CR_EXPECTED` and
+ * undici "Missing expected CR after header value". Written as explicit escapes
+ * so no editor or `.gitattributes` rule can quietly repair it.
  */
 export function malformedResponse(body: string): string {
   const length = Buffer.byteLength(body, 'utf8');
@@ -49,7 +38,6 @@ export function malformedResponse(body: string): string {
     'HTTP/1.1 200 OK\r\n' +
     'Content-Type: application/json\r\n' +
     `Content-Length: ${length}\r\n` +
-    // The bare LF. Everything above and below is correct CRLF.
     'Strict-Transport-Security: max-age=31536000;\n includeSubDomains\r\n' +
     'Connection: close\r\n' +
     '\r\n' +
@@ -72,12 +60,10 @@ export function wellFormedResponse(body: string): string {
 }
 
 /**
- * Starts a raw server that answers every request with `respond(n)`.
- *
  * @param respond - Called with the 0-based request index, so a test can answer
- *   the first attempt differently from the retry. Return `null` to accept the
- *   connection and never answer, which is how the timeout case is exercised —
- *   ending the socket instead would surface as a reset, not a timeout.
+ *   the retry differently from the first attempt. Return `null` to accept the
+ *   connection and never answer — how the timeout case is exercised, since
+ *   ending the socket would surface as a reset instead.
  */
 export async function startRawHttpServer(
   respond: (attempt: number) => string | null,
@@ -98,9 +84,8 @@ export async function startRawHttpServer(
       const head = raw.slice(0, separator);
       const body = raw.slice(separator + 4);
 
-      // Wait for the whole body before answering, so that a retry which
-      // forgets to replay it is visible as an empty `body` rather than as a
-      // race between the two.
+      // Wait for the whole body, so a retry that forgets to replay it shows up
+      // as an empty `body` rather than as a race between the two.
       const declared = /content-length:\s*(\d+)/i.exec(head);
       const expected = declared?.[1] === undefined ? 0 : Number(declared[1]);
       if (Buffer.byteLength(body, 'utf8') < expected) return;
@@ -109,7 +94,7 @@ export async function startRawHttpServer(
       requests.push({ head, body, method: head.split(' ')[0] ?? '' });
 
       const reply = respond(requests.length - 1);
-      if (reply === null) return; // hold the connection open, never answer
+      if (reply === null) return;
       socket.end(reply);
     };
 
@@ -120,7 +105,7 @@ export async function startRawHttpServer(
 
     socket.on('data', onData);
     socket.on('error', () => {
-      // A client that destroys the socket on timeout is expected here.
+      // A client destroying the socket on timeout is expected here.
     });
   });
 
@@ -137,8 +122,7 @@ export async function startRawHttpServer(
     close: () =>
       new Promise<void>((resolve, reject) => {
         // `net.Server` has no `closeAllConnections`, and the timeout case
-        // deliberately leaves a socket open — `close` alone would then wait
-        // for it forever.
+        // deliberately leaves a socket open — `close` alone would wait forever.
         for (const socket of open) socket.destroy();
         open.clear();
         server.close((error) => (error ? reject(error) : resolve()));

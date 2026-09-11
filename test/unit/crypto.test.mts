@@ -1,12 +1,10 @@
 /**
  * AES interop against the Java gateway.
  *
- * Every expected ciphertext in `java-vectors.json` was produced by the Java
- * server's own cipher path (see `scripts/java/GenerateVectors.java`, which
- * mirrors `PaymentPayloadEncryptionHelper`). They are **never** regenerated
- * from this implementation: a fixture written by the code under test proves
- * only that the code is self-consistent, which is the one thing that was never
- * in doubt.
+ * Every expected ciphertext in `java-vectors.json` was produced by the server's
+ * own cipher path (`scripts/java/GenerateVectors.java`). They are never
+ * regenerated from this implementation: a fixture written by the code under
+ * test proves only self-consistency, which was never in doubt.
  */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -60,9 +58,9 @@ describe('crypto — interop with the Java gateway', () => {
   }
 
   it('adds a whole padding block on an exact block multiple', () => {
-    // The classic PKCS#7 mistake: padding only when there is a remainder. Such
-    // an implementation produces 16 bytes here instead of 32, and Java then
-    // rejects every payload whose length happens to be a multiple of 16.
+    // The classic PKCS#7 mistake is padding only when there is a remainder,
+    // which yields 16 bytes here instead of 32 — and Java then rejects every
+    // payload whose length happens to be a multiple of 16.
     const exact = fixture.vectors.find((v) => v.name === 'exact-one-block');
     assert.ok(exact, 'fixture must include an exact-block-multiple case');
     assert.equal(exact.plaintextByteLength, 16);
@@ -81,15 +79,12 @@ describe('crypto — interop with the Java gateway', () => {
   });
 
   it('is deterministic, because the IV comes from the key', () => {
-    // Not an accident to be tidied up later: the gateway derives the IV the
-    // same way, so a random IV would simply fail to decrypt server-side. The
-    // cost is that identical payloads produce identical ciphertext, which is
-    // documented in crypto.ts and pinned here so nobody "fixes" it silently.
+    // Not an oversight to be tidied up later: the gateway derives the IV the
+    // same way, so a random IV would fail to decrypt server-side.
     assert.equal(crypto.encryptPayload(KEY, 'hello'), crypto.encryptPayload(KEY, 'hello'));
 
     // Keys sharing a 16-character prefix share an IV but not the AES key, so
-    // the ciphertexts must still differ - otherwise the key is not reaching
-    // the cipher at all.
+    // the ciphertexts must still differ.
     const shared = '0'.repeat(16);
     assert.notEqual(
       crypto.encryptPayload(`${shared}${'a'.repeat(16)}`, 'hello'),
@@ -116,8 +111,8 @@ describe('crypto — tampered ciphertext', () => {
   });
 
   it('throws rather than returning garbage when a byte is flipped', () => {
-    // CBC has no integrity protection; the PKCS#7 padding check is the only
-    // thing between a mangled response and a garbage transactionStatus.
+    // CBC has no integrity protection; the padding check is the only thing
+    // between a mangled response and a garbage transactionStatus.
     assert.throws(
       () => crypto.decryptPayload(fixture.tampered.key, fixture.tampered.tamperedCiphertextBase64),
       (error: unknown) => {
@@ -150,9 +145,9 @@ describe('crypto — tampered ciphertext', () => {
   });
 
   it('names the real cause when a plain-JSON error body reaches the decryptor', () => {
-    // Pesepay never encrypts errors, so this is a live failure mode, not a
-    // hypothetical: an OpenSSL padding message would send the reader hunting
-    // for a key mismatch that does not exist.
+    // A live failure mode, not hypothetical: Pesepay never encrypts errors. An
+    // OpenSSL padding message would send the reader hunting for a key mismatch
+    // that does not exist.
     assert.throws(
       () => crypto.decryptPayload(KEY, '{"message":"Invalid integration key"}'),
       /not valid base64/,
@@ -186,10 +181,8 @@ describe('crypto — key validation', () => {
   });
 
   it('never puts key material in an error message or stack', () => {
-    // Errors end up in log aggregators and issue trackers. Covers both the
-    // config path (a mis-sized key) and the crypto path (a valid key that
-    // fails to decrypt), since the second is the one that wraps an OpenSSL
-    // error whose detail fields can carry key material.
+    // Covers the config path and the crypto path; the second is the one that
+    // wraps an OpenSSL error whose detail fields can carry key material.
     const shortSecret = 'S3CRETKEYS3CRETKEYS3CRETKEYS3C';
     const validSecret = 'S3CRETKEYS3CRETKEYS3CRETKEYS3CRE';
     assert.equal(validSecret.length, 32);
