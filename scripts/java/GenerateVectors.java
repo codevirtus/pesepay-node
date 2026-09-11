@@ -66,9 +66,8 @@ public final class GenerateVectors {
                 KEY_A, "0123456789abcde"));
 
         vectors.add(new Vector("exact-one-block",
-                "Exactly 16 bytes. PKCS#7 must append a WHOLE extra block of 0x10 bytes; an "
-                        + "implementation that pads only when there is a remainder produces 16 bytes "
-                        + "of ciphertext here instead of 32.",
+                "Exactly 16 bytes. PKCS#7 must append a WHOLE extra block, so an "
+                        + "implementation that pads only on a remainder yields 16 bytes here, not 32.",
                 KEY_A, "0123456789abcdef"));
 
         vectors.add(new Vector("exact-two-blocks",
@@ -93,8 +92,8 @@ public final class GenerateVectors {
                         + "check-payment?referenceNumber=RN123456789\"}"));
 
         vectors.add(new Vector("non-ascii-plaintext",
-                "Multi-byte UTF-8 in the PLAINTEXT is fine - both sides encode UTF-8. Only the KEY "
-                        + "must be ASCII, because Java derives the IV by chars and Node by bytes.",
+                "Multi-byte UTF-8 in the PLAINTEXT is fine; only the KEY must be ASCII, "
+                        + "because Java derives the IV by chars and Node by bytes.",
                 // Escaped rather than literal so this generator emits identical bytes
                 // regardless of the platform's javac source encoding.
                 KEY_A, "{\"name\":\"Tafadzwa M\u00fcller\",\"note\":\"paid \u2014 \u2713 \u20ac10\"}"));
@@ -176,9 +175,8 @@ public final class GenerateVectors {
 
         out.append("  \"tampered\": {\n");
         out.append("    \"note\": ").append(json(
-                "Last ciphertext byte flipped. Decryption must THROW on the PKCS#7 padding check, "
-                        + "never return garbage - a payments SDK that silently accepts a mangled "
-                        + "transactionStatus is worse than one that fails loudly.")).append(",\n");
+                "Last ciphertext byte flipped. Decryption must THROW on the PKCS#7 padding "
+                        + "check, never return garbage.")).append(",\n");
         out.append("    \"key\": ").append(json(KEY_A)).append(",\n");
         out.append("    \"originalPlaintext\": ").append(json(tamperPlaintext)).append(",\n");
         out.append("    \"validCiphertextBase64\": ").append(json(tamperSource)).append(",\n");

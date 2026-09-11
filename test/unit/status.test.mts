@@ -1,10 +1,7 @@
 /**
- * Transaction statuses, checked against the gateway's own enum.
- *
- * The values, codes and descriptions here were transcribed from
- * `TransactionStatus.java` in `pesepay-cloud-utilities`. These tests mostly
- * guard the transcription — and the one place where the obvious approach is
- * wrong.
+ * Transaction statuses, checked against the gateway's own enum. Mostly guards
+ * the transcription from `TransactionStatus.java` — and the one place where the
+ * obvious approach is wrong.
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
@@ -61,9 +58,8 @@ describe('status — terminality', () => {
   });
 
   it('treats an unrecognised status as terminal', () => {
-    // Fail-safe direction: a status the gateway adds later is far more likely
-    // to be a new terminal outcome than a new in-flight one, and guessing
-    // "pending" turns a poll loop into an infinite one.
+    // Fail-safe direction: guessing "pending" for an unknown status would turn
+    // a poll loop into an infinite one.
     assert.equal(status.isTerminal('SOMETHING_NEW'), true);
     assert.equal(status.isPaid('SOMETHING_NEW'), false);
   });
@@ -85,8 +81,8 @@ describe('status — terminality', () => {
 
 describe('status — the code is not a discriminator', () => {
   it('gives CLOSED and CLOSED_PERIOD_ELAPSED the same code', () => {
-    // The trap this whole module exists to stop anyone walking into: branching
-    // on transactionStatusCode conflates two different outcomes.
+    // The trap this module exists to stop: branching on transactionStatusCode
+    // conflates two different outcomes.
     assert.equal(TRANSACTION_STATUS_CODES.CLOSED, 307);
     assert.equal(TRANSACTION_STATUS_CODES.CLOSED_PERIOD_ELAPSED, 307);
   });

@@ -54,8 +54,7 @@ describe('errors — hierarchy', () => {
   });
 
   it('nests the specific classes under the ones you would catch', () => {
-    // An auth failure is an API failure; a timeout is a network failure. This
-    // is what lets a caller catch broadly and still narrow when it wants to.
+    // Lets a caller catch broadly and still narrow when it wants to.
     assert.ok(new PesepayAuthError({ status: 403 }) instanceof PesepayApiError);
     assert.ok(new PesepayTimeoutError('x', 1) instanceof PesepayNetworkError);
     assert.ok(!(new PesepayCryptoError('x') instanceof PesepayApiError));
