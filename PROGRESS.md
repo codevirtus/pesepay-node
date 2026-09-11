@@ -14,7 +14,7 @@ for where things stand — update it at the end of every stage.
 | 2 | Toolchain (package.json, tsconfig, biome) | ✅ done |
 | 3 | Crypto + transport | ✅ done |
 | 4 | Payments client | ✅ done |
-| 5 | Catalogue, invoices, webhook | ⬜ not started |
+| 5 | Catalogue, invoices, webhook | ✅ done |
 | 6 | Entry points + v1 compat layer | ⬜ not started |
 | 7 | Docs | ⬜ not started |
 | 8 | CI + release | ⬜ not started |
@@ -285,6 +285,219 @@ Two TSDoc corrections in `errors.ts`, no behaviour change: `PesepayApiError`
 now also documents the malformed-2xx case, and `PesepayConfigError` documents
 that it covers per-call arguments (a negative amount, a customer-less seamless
 payment) as well as construction.
+
+## Stage 5 — done
+
+Catalogue, invoices and the webhook, all on `src/client.ts` (701 → 1,375
+lines), plus 84 new tests in three new files. `npm run verify` is green end to
+end: lint, typecheck, build, **214 tests**, `publint --strict`, `attw` clean in
+every resolution mode.
+
+Still not wired into `src/index.ts`; entry points remain stage 6.
+
+### What shipped
+
+| method | endpoint | envelope | returns |
+|---|---|---|---|
+| `getActiveCurrencies()` | `GET /v1/currencies/active` | **plain** | `Currency[]` |
+| `getPaymentMethods(code)` | `GET /v1/payment-methods/for-currency` | **plain** | `PaymentMethod[]` |
+| `getActivePaymentMethods()` | `GET /v1/payment-methods/all-active` | **plain** | `PaymentMethod[]` |
+| `initiateInvoice(options)` | `POST /v1/payments/invoice/initiate` | encrypted | `InvoiceResult` |
+| `checkInvoice(invoiceNumber)` | `GET /v1/payments/invoice/check` | encrypted | `PaymentResult` |
+| `parseCallback(body, headers?)` | — (you are the server) | **plain** | `{ result, keyVerified, keyStatus }` |
+
+New types in `types.ts`: `RecurringFrequency`, `InvoicePayer`,
+`CreateInvoiceRequest`, `Invoice`. New in `client.ts`:
+`InitiateInvoiceOptions`, `InvoiceResult`, `CallbackHeaders`,
+`CallbackKeyStatus`, `CallbackVerification`.
+
+### What the wire contract turned out to be
+
+Read off the Java server, not inferred:
+
+- **`/v1/currencies/active`** → `Collection<Currency>`, the JPA entity whole:
+  `name`, `description`, `code`, `defaultCurrency`, `rateToDefault`, `active`,
+  plus `BaseEntity`'s auditing columns (`createdDate`, `version`, `deleted`, …).
+  (`parameters/.../CurrenciesRestController.java`)
+- **`/v1/payment-methods/for-currency?currencyCode=…`** → `Collection<PaymentMethod>`,
+  also the entity whole — including `reverseProxyName`, which is internal
+  routing config. Not modelled in our types, but preserved rather than dropped.
+- **`getActivePaymentMethods` reads `/all-active`, not `/active`.** The plan
+  said "for-currency" for both; the server says otherwise, and the two
+  similarly-named endpoints are not interchangeable:
+
+  | path | returns | filter |
+  |---|---|---|
+  | `/v1/payment-methods/all-active` | `Collection<PaymentMethod>` | none |
+  | `/v1/payment-methods/active` | `Collection<PaymentMethodDto>` | **drops every `redirectRequired` method** |
+
+  `PaymentMethodDto` carries only `name`, `code`, `acceptedCurrencies` and
+  required-field *names* — no amount bounds, no `redirectRequired`, no
+  `displayName`. Using it would make "cards do not exist" indistinguishable
+  from "cards need a redirect".
+- **All three catalogue paths are `permitAll()`** in `WebSecurityConfig`, along
+  with `/v1/payments/**` and `/v2/payments/**`.
+- **Invoice initiate takes `CreateInvoiceCommand` and returns the `Invoice`
+  entity** — not a purpose-built DTO, so the reply also carries the nested
+  `application` object and the JPA auditing columns.
+- **`invoiceNumber` is `String.format("%07d", id)`** — a zero-padded row id,
+  e.g. `0001042`. It doubles as the reference number of the transaction created
+  when the payer pays, which is why `checkInvoice` returns a
+  `PaymentTransactionResult` rather than an invoice.
+- **The invoice `pollUrl` carries `?invoiceNumber=`**, built as
+  `pollUrl.concat("?invoiceNumber=").concat(invoiceNumber)`. It is still a valid
+  argument to `pollTransaction`.
+
+### Three traps in the invoice endpoint
+
+1. **`applicationCode` is required, and its absence is a 500.** `Invoice.fromCommand`
+   resolves the owning application from `applicationCode`, or failing that from
+   `decrypt(applicationId)` — and `SeamlessInvoiceCreationProcessingProviderImpl`
+   never injects one from the integration key. So with neither field set, the
+   DES decrypt of `null` blows up inside the transaction. Every other endpoint
+   in this SDK identifies the application from the `key` header; this one does
+   not. Enforced client-side with that explanation.
+2. **`currencyCode` on the way out, `currency` on the way back.** The Java field
+   is `Currency currency` annotated `@JsonProperty("currencyCode")` with a
+   code-lookup deserialiser, so the request key is `currencyCode` (a string) and
+   the reply key is `currency` (the whole record). Sending `currency` gets it
+   silently dropped and the invoice rejected as currency-less.
+3. **Dates are `MM/dd/yyyy`, via a hand-written `LocalDateDeserializer`** — not
+   Jackson's ISO handling. `2026-09-11` does not parse. `initiateInvoice`
+   accepts a `Date`, an ISO `YYYY-MM-DD`, or the gateway's own `MM/DD/YYYY`, and
+   converts; a `Date` is read in **UTC**, because `new Date('2026-09-11')` is UTC
+   midnight and reading local components would report the 10th for every caller
+   west of Greenwich — a due date silently one day early, with nothing
+   downstream to flag it. Dates that are not on the calendar (`2026-02-30`) are
+   rejected rather than rolled over, which is what `Date.UTC` would do.
+
+Also: `recurringPayment: true` without a `recurringFrequency` is a
+`requireNonNull` on the server, so a 500 rather than a validation message. And
+`initiatorReference` is enforced unique, which makes it a usable idempotency
+key.
+
+### The callback, and why the docs are blunt about it
+
+`PaymentTransactionResultPosterImpl` is 60 lines, and every property that
+matters is visible in them:
+
+```java
+restTemplate.getInterceptors().add((request, body, execution) -> {
+    request.getHeaders().add("Authorization", integrationKeyForApplication.getKey());
+    return execution.execute(request, body);
+});
+} catch (RecordNotFoundException ex) {
+    log.warn("### {}", ex.getMessage());   // …and posts anyway, with no header
+}
+```
+
+- **Plain unencrypted JSON**, not the `{payload}` envelope.
+- **No HMAC, no signature.** The only credential is the integration key
+  verbatim in an `Authorization` header.
+- **The header is absent when the key lookup fails**, and the body is posted
+  regardless — the `catch` logs a warning and falls through.
+- **No retries.** One `postForEntity`, every exception caught and logged. A
+  failed delivery is lost permanently.
+- **A reversal is a second callback.** `PaymentStatusUpdateEventListener` posts
+  on *every* terminal status change, so `SUCCESS` then `REVERSED` is two
+  callbacks for one reference number.
+
+So `parseCallback` reports `keyVerified` and never implies more than that. Its
+TSDoc states plainly that handlers must be **idempotent on `referenceNumber` +
+`transactionStatus`** and must **re-verify through `checkPayment()` before
+crediting anything**, and it carries a complete Express handler showing the
+three steps in order — respond first, re-verify second, credit idempotently
+third — with each step tied to the server property that forces it.
+
+### Decisions taken in stage 5
+
+- **No credential is sent to the catalogue endpoints.** They are `permitAll()`,
+  so the integration key buys nothing, and a bearer credential is not worth
+  sending to an endpoint that does not ask for it. Pinned by a test that walks
+  every request header. If Pesepay ever secures these, the call answers
+  `401`/`403` through the existing mapping, and this is the decision to revisit.
+- **Status is checked before parsing on the plain path too**, mirroring
+  `#exchange`. A 503 whose body is a JSON object would otherwise be reported as
+  "the body was not an array", burying the real cause.
+- **An enveloped catalogue response is rejected, not decrypted.** This is the
+  negative control for "these endpoints are not encrypted": a client that
+  opportunistically unwrapped `{payload}` would pass every round-trip test and
+  fail only here.
+- **`parseCallback` throws `PesepayConfigError`, not `PesepayApiError`.**
+  Nothing HTTP happened from our side — the body is a per-call argument, and
+  fabricating an HTTP error with an invented status and URL would be worse than
+  saying what it is. A body that *is* an envelope gets its own message, since
+  every other payments response is enveloped and that is a natural mistake.
+- **A missing `Authorization` header never throws.** The gateway genuinely sends
+  none, and a webhook endpoint that crashes on that is worse than one that
+  records the fact.
+- **`keyStatus` exists alongside `keyVerified`**, separating `'absent'` (the
+  gateway could not find an integration key — a configuration problem on your
+  own account) from `'mismatched'` (something presented the wrong key — a stale
+  key after a rotation, or someone else). The boolean loses a distinction worth
+  alerting on differently.
+- **Several `Authorization` headers count as no key presented.** A merged pair
+  is the shape a header-injection attempt takes and is not something the gateway
+  sends; picking one to compare would let the right key be smuggled alongside a
+  wrong one.
+- **The comparison is verbatim** — no `Bearer` prefix stripped, nothing
+  trimmed. The server sets the header to the raw key, so leniency would only
+  widen what counts as a match.
+- **`derivePaymentResult` is shared between the polled path and the callback
+  path**, so a webhook result and a `checkPayment` result cannot drift apart.
+
+### The constant-time comparison, and the one test that actually pins it
+
+`timingSafeEqual` throws outright on operands of different lengths, so the
+obvious fix is a length check in front of it — which both short-circuits *and*
+answers "how long is the key?". Instead both sides are hashed to a fixed 32
+bytes and compared once. The hash is not for secrecy; it is for making the
+operands the same size whatever was presented.
+
+Proving that in tests took three angles, and the third is the one that matters:
+
+| test | catches |
+|---|---|
+| a table of 8 odd headers (empty, 64 KiB, non-ASCII, embedded NUL, ±1 char) | passing raw strings to `timingSafeEqual`, which throws |
+| same-length vs 1-char wrong key, cost within 5× | a length check that short-circuits |
+| **a 1 MiB header must cost >3× a 36-byte one** | **`===`, and any other short-circuit** |
+
+The third test exists because the first two cannot tell a real constant-time
+comparison from a plain `===` — which is functionally correct and differs only
+in a timing gap too small to measure from JavaScript. It comes at it from the
+other direction and asserts a property `===` provably lacks: the comparison must
+do work proportional to its input. A string comparison checks length first, so
+1 MiB costs it what one byte costs; hashing must read all of it.
+
+That gap was found by mutation testing, not by inspection — `===` survived the
+first round and the test was written to kill it.
+
+### Mutation testing — twenty injected, twenty caught
+
+| mutation | result |
+|---|---|
+| `timingSafeEqual` on the raw strings | **12 failures** |
+| `parseCallback` throws on an absent header | **11 failures** |
+| month and day swapped in the date format | **5 failures** |
+| send the integration key to the catalogue endpoints | **3 failures** |
+| an absent header counts as verified | **3 failures** |
+| opportunistically decrypt an enveloped catalogue response | **2 failures** |
+| skip the status check on the plain path | **2 failures** |
+| strip a `Bearer` prefix and trim before comparing | **2 failures** |
+| `checkInvoice` queries `?referenceNumber=` | **2 failures** |
+| length check in front of `timingSafeEqual` | **2 failures** |
+| `getActivePaymentMethods` reads `/active` | 1 failure |
+| `readCatalogue` stops requiring a `code` | 1 failure |
+| pick a value out of several `Authorization` headers | 1 failure |
+| a `Date` read in local time rather than UTC | 1 failure |
+| a rolled-over calendar date accepted | 1 failure |
+| `applicationCode` no longer required | 1 failure |
+| `parseCallback` accepts a `{payload}` envelope | 1 failure |
+| **`===` instead of a constant-time comparison** | **survived at first** — see above |
+| invoice request key is `currency` | **compile error** (TS2353) |
+
+Tarball is **53 files / 69.2 KB packed**, still nothing outside `dist/`, `src/`,
+`package.json`, `README`, `LICENSE`. No test files, no `scripts/`.
 
 ## Open items needing input
 
