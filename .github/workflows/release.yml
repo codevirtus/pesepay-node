@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: verify the tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      dist_tag: ${{ steps.version.outputs.dist_tag }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+
+      - id: version
+        name: the tag and package.json must agree
+        run: |
+          tagged="${GITHUB_REF_NAME#v}"
+          version="$(node -p "require('./package.json').version")"
+          if [ "$tagged" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
+          case "$version" in
+            *-*) dist_tag=next ;;
+            *) dist_tag=latest ;;
+          esac
+          {
+            echo "version=$version"
+            echo "dist_tag=$dist_tag"
+          } >> "$GITHUB_OUTPUT"
+
+      # MIGRATION.md tells 1.x users to install pesepay@v1, and `latest` moving
+      # to 2.x is what makes that the only honest escape hatch. The tag has to
+      # exist before it is needed, not after.
+      - name: 1.0.4 must already be reachable as @v1
+        if: steps.version.outputs.dist_tag == 'latest'
+        run: |
+          current="$(npm view pesepay dist-tags.v1 2>/dev/null || true)"
+          if [ "$current" != "1.0.4" ]; then
+            echo "::error::the v1 dist-tag is '${current:-unset}', expected 1.0.4 — run: npm dist-tag add pesepay@1.0.4 v1"
+            exit 1
+          fi
+
+      - run: npm run verify
+      - run: node scripts/check-package.mts
+
+  publish:
+    name: publish to npm
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    permissions:
+      contents: write # the GitHub release
+      id-token: write # OIDC, for npm Trusted Publishing and provenance
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+
+      # Trusted Publishing needs npm 11.5.1 or newer. There is no NPM_TOKEN:
+      # the OIDC exchange is the credential, and provenance follows from
+      # publishConfig.provenance without a --provenance flag.
+      - run: npm install -g npm@latest
+      - run: npm ci
+
+      - name: publish
+        env:
+          DIST_TAG: ${{ needs.verify.outputs.dist_tag }}
+        run: npm publish --tag "$DIST_TAG"
+
+      - name: release notes from CHANGELOG.md
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: node scripts/release-notes.mts "$VERSION" --out "$RUNNER_TEMP/notes.md"
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          DIST_TAG: ${{ needs.verify.outputs.dist_tag }}
+        run: |
+          if [ "$DIST_TAG" = "next" ]; then latest=--prerelease; else latest=--latest; fi
+          gh release create "$GITHUB_REF_NAME" \
+            --title "v$VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --verify-tag \
+            "$latest"

@@ -17,7 +17,7 @@ for where things stand — update it at the end of every stage.
 | 5 | Catalogue, invoices, webhook | ✅ done |
 | 6 | Entry points + v1 compat layer | ✅ done |
 | 7 | Docs | ✅ done |
-| 8 | CI + release | ⬜ not started |
+| 8 | CI + release | ✅ done (publish blocked on npm rights) |
 
 ## Key decisions (settled — do not re-litigate)
 
@@ -764,12 +764,114 @@ share them.)
 rewrites relative links against the repository, so the README's links to both
 documents resolve on the registry page.
 
+## Stage 8 — done, except what needs an npm maintainer
+
+CI and the release pipeline: `.github/workflows/ci.yml`, `.github/workflows/release.yml`,
+`.github/dependabot.yml`, `.github/RELEASING.md`, two scripts and 11 new tests.
+`npm run verify` is green end to end — lint, typecheck, build, **279 tests**,
+`publint --strict`, `attw` clean in every resolution mode, and now the tarball
+check.
+
+### What shipped
+
+| file | what it does |
+|---|---|
+| `.github/workflows/ci.yml` | `npm run verify` on Node 22 / 24 / 26 × Linux + Windows, macOS on 24, plus the engines-floor job |
+| `.github/workflows/release.yml` | tag push → verify → approval → OIDC publish → GitHub release |
+| `.github/dependabot.yml` | weekly npm (grouped) and github-actions updates |
+| `.github/RELEASING.md` | the runbook, including the two steps only a maintainer can do |
+| `scripts/check-package.mts` | tarball contents + zero runtime dependencies, wired into `verify` |
+| `scripts/release-notes.mts` | the GitHub release body, cut out of `CHANGELOG.md` |
+| `scripts/smoke-installed.mjs` | the installed tarball, exercised on the oldest supported Node |
+
+### The engines floor cannot be tested by running the tests
+
+`engines` says `>=22.12.0`, but the suite is `.mts` and Node only enables type
+stripping by default from **22.18**. A matrix leg on 22.12.0 would fail on the
+harness, not on the package.
+
+So the floor job checks the thing the floor is actually a claim about: it packs
+the tarball, installs it into an empty project on 22.12.0, and runs
+`scripts/smoke-installed.mjs` — plain JavaScript, no type stripping — which
+asserts `esm.Pesepay === cjs.Pesepay` through the real `exports` map,
+`instanceof` across the boundary, `VERSION`, an empty `dependencies`, and that
+`pesepay/v1-compat` loads. That is the consumer contract; the test suite is a
+contributor concern and runs on 22 / 24 / 26 latest.
+
+### The `v1` dist-tag is a gate, not a checklist item
+
+`MIGRATION.md` now tells 1.x users to `npm install pesepay@v1`, which is only
+true once `npm dist-tag add pesepay@1.0.4 v1` has run. Documentation that
+depends on a human remembering a command is documentation that will be wrong
+once.
+
+So `release.yml` reads `npm view pesepay dist-tags.v1` and refuses to publish
+`latest` unless it is `1.0.4`. The tag cannot be forgotten, because forgetting
+it stops the release rather than shipping a false sentence. (A prerelease
+publishes under `next` and skips the check — `latest` does not move.)
+
+### Release notes are extracted, not retyped
+
+`scripts/release-notes.mts` takes the `## [2.0.0]` section out of
+`CHANGELOG.md`, rewrites its relative links to `blob/v2.0.0/…` (a relative link
+in a GitHub release body does not resolve against the repository), and appends
+the compare URL the changelog already defines as a link reference. An empty
+section is an error rather than an empty release.
+
+Mutations, as in every stage:
+
+| mutation | result |
+|---|---|
+| the section never stops at the next heading | **2 failures** |
+| an empty section is allowed through | 1 failure |
+| every link is rewritten, absolute ones included | 1 failure |
+| a stray document added to `files` | caught — `unexpected file in the tarball` |
+| a test file added to `files` | caught — `test artefact in the tarball` |
+| `axios` back in `dependencies` | caught — `runtime dependencies must stay at zero` |
+
+### Trusted Publishing, and why there is no token
+
+`release.yml` has `id-token: write` and no `NPM_TOKEN` — the OIDC exchange is
+the credential, and provenance follows from `publishConfig.provenance` without a
+`--provenance` flag. The publish job sits behind an `npm-publish` environment,
+and **the same string must be registered in npm's Trusted Publisher config**; a
+mismatch there is the usual cause of `ENEEDAUTH`. All of it is written down in
+`.github/RELEASING.md`, because the person who has to do it is not the person
+who wrote this.
+
+### Badges
+
+Five, added to the README now that there is something to link to: CI status, the
+npm version, Node `>= 22.12` (a static badge — shields' `node/v` reads the
+*published* version, which is still 1.0.4 and declares no `engines`), zero
+dependencies, and the licence.
+
+### Blocked, and honestly so
+
+Everything up to the publish step is done and verifiable. The publish itself
+cannot be reached from this repository:
+
+- **npm Trusted Publisher config** on the `pesepay` package, plus the
+  `npm-publish` GitHub environment and its reviewers. `npm whoami` here is
+  unauthenticated; the account must be `codevirtus`, `charlescoder` or
+  `deanmaponga`.
+- **`npm dist-tag add pesepay@1.0.4 v1`**, same rights. Until it runs, the
+  release workflow will stop before publishing — which is the intended
+  behaviour, not a bug to work around.
+- **Branch protection** on `main` (require the CI checks), which is a repository
+  setting rather than a file.
+- **Sandbox credentials** for `api.test.pesepay.com`, still outstanding from
+  stage 3. Nothing in this repository has ever spoken to a real gateway.
+
 ## Open items needing input
 
 - **Sandbox credentials** (`api.test.pesepay.com`) for live end-to-end verification.
 - **npm publish rights** — the Trusted Publisher must be configured by an account
   with maintainer rights on `pesepay`: `codevirtus`, `charlescoder`, or
-  `deanmaponga` (who published 1.0.4).
+  `deanmaponga` (who published 1.0.4). See `.github/RELEASING.md` for the exact
+  fields, and run `npm dist-tag add pesepay@1.0.4 v1` before the first 2.x release.
+- **Repository settings** — the `npm-publish` environment with required
+  reviewers, and branch protection on `main` requiring the CI checks.
 
 ## Related, outside this repo
 

@@ -366,13 +366,21 @@ is still a per-call failure rather than a startup failure. Moving to
 
 ## Staying on 1.x
 
-1.0.4 remains installable and is unaffected by this release:
+1.0.4 is unaffected by this release. Its tarball and its integrity hash are
+untouched, so existing lockfiles, `pesepay@^1` and `pesepay@~1.0.4` all keep
+resolving exactly as they did — only a bare `npm install pesepay` moves, which
+is what the major version number is for. The `v1` dist-tag names it:
 
 ```shell
-npm install pesepay@1.0.4
+npm install pesepay@v1
 ```
 
-It receives security fixes only. `pesepay/v1-compat` is the better place to be:
+The tag is created before `latest` moves to 2.0.0, and the release workflow
+refuses to publish until it points at 1.0.4 — so it is a fact by then, not a
+forward promise. Pinning `pesepay@1.0.4` says the same thing and works just as
+well.
+
+1.x receives security fixes only. `pesepay/v1-compat` is the better place to be:
 it is the same API on top of a maintained client, with the timeout, the sandbox
 switch, and the HTTP fix for the gateway's malformed response headers that 1.x
 handled by disabling Node's strict parser for every request.

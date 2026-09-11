@@ -86,7 +86,9 @@
     "test": "node --test \"test/**/*.test.mts\"",
     "test:cov": "node --test --experimental-test-coverage \"test/**/*.test.mts\"",
     "check:pkg": "publint --strict && attw --pack .",
-    "verify": "npm run lint && npm run typecheck && npm run test && npm run check:pkg",
+    "check:tarball": "node scripts/check-package.mts",
+    "verify": "npm run lint && npm run typecheck && npm run test && npm run check:pkg && npm run check:tarball",
+    "release:notes": "node scripts/release-notes.mts",
     "prepack": "npm run build",
     "pretest": "npm run build"
   },

@@ -1,5 +1,11 @@
 # pesepay
 
+[![CI](https://github.com/codevirtus/pesepay-node/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/codevirtus/pesepay-node/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/pesepay?logo=npm&logoColor=white&color=cb3837)](https://www.npmjs.com/package/pesepay)
+[![node](https://img.shields.io/badge/node-%E2%89%A5%2022.12-5fa04e?logo=nodedotjs&logoColor=white)](https://nodejs.org/en/about/previous-releases)
+[![dependencies](https://img.shields.io/badge/dependencies-0-4c1)](https://github.com/codevirtus/pesepay-node/blob/main/package.json)
+[![licence](https://img.shields.io/npm/l/pesepay?color=blue)](LICENSE)
+
 Official Node.js SDK for the [Pesepay](https://pesepay.com) payment gateway.
 
 - **Zero runtime dependencies.** Nothing but `node:` builtins.
