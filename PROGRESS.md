@@ -501,8 +501,8 @@ Tarball is **53 files / 69.2 KB packed**, still nothing outside `dist/`, `src/`,
 
 ## Stage 6 — done
 
-The package is wired up. `src/index.ts` (99 lines) is the public CJS entry,
-`src/index.mts` the ESM wrapper, `src/compat/v1.ts` (310 lines) the
+The package is wired up. `src/index.ts` (96 lines) is the public CJS entry,
+`src/index.mts` the ESM wrapper, `src/compat/v1.ts` (345 lines) the
 `pesepay/v1-compat` layer, plus 50 new tests. `npm run verify` is green end to
 end: lint, typecheck, build, **264 tests**, `publint --strict`, `attw` clean in
 every resolution mode.
