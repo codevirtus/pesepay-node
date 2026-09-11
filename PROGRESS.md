@@ -13,7 +13,7 @@ for where things stand — update it at the end of every stage.
 | 1 | Repo + history | ✅ done |
 | 2 | Toolchain (package.json, tsconfig, biome) | ✅ done |
 | 3 | Crypto + transport | ✅ done |
-| 4 | Payments client | ⬜ not started |
+| 4 | Payments client | ✅ done |
 | 5 | Catalogue, invoices, webhook | ⬜ not started |
 | 6 | Entry points + v1 compat layer | ⬜ not started |
 | 7 | Docs | ⬜ not started |
@@ -186,6 +186,105 @@ each was caught by exactly the test that should catch it:
 
 Tarball is now **48 files / 37.1 KB packed**, still nothing outside `dist/`,
 `src/`, `package.json`, `README`, `LICENSE`. No test files, no `scripts/`.
+
+## Stage 4 — done
+
+`src/client.ts` (701 lines) — the `Pesepay` class — plus 44 new tests. `npm run
+verify` is green end to end: lint, typecheck, build, **130 tests**,
+`publint --strict`, `attw` clean in every resolution mode.
+
+Still not wired into `src/index.ts`; entry points remain stage 6, and the tests
+reach `dist/client.js` through a new loader in `test/fixtures/modules.mts`.
+
+### What shipped
+
+| method | endpoint | returns |
+|---|---|---|
+| `initiateTransaction(options)` | `POST /v1/payments/initiate` | `{ referenceNumber, pollUrl, redirectUrl }` |
+| `makeSeamlessPayment(options)` | `POST /v2/payments/make-payment` | `PaymentResult` |
+| `checkPayment(referenceNumber)` | `GET /v1/payments/check-payment` | `PaymentResult` |
+| `pollTransaction(pollUrl)` | `GET` that URL | `PaymentResult` |
+
+The constructor takes `{ integrationKey, encryptionKey, resultUrl, returnUrl,
+timeoutMs?, baseUrl?, transport? }` **and** the v1 positional
+`(integrationKey, encryptionKey)` form, with `resultUrl`/`returnUrl` as settable
+properties. Keys are validated eagerly via `assertValidEncryptionKey`, so a bad
+key is a `PesepayConfigError` before any socket.
+
+`PaymentResult` is the decoded `PaymentTransactionResult` — real
+`transactionStatus`, `transactionStatusCode`, `transactionStatusDescription`,
+`amountDetails`, `transactionMetadata` — plus derived `paid` and `isTerminal`
+from `status.ts`. Frozen, and both derived fields are **plain data rather than
+getters**, so the object survives `JSON.stringify`, `structuredClone`, and a
+trip through a queue.
+
+### Decisions taken in stage 4
+
+- **Status is checked before anything is decrypted.** This is the single
+  load-bearing ordering in the file. Errors are always plain JSON, never the
+  `{payload}` envelope, so decrypting first turns "your integration key is
+  unknown" (404) into a padding error and sends you rotating the wrong
+  credential. `404`/`403` → `PesepayAuthError`; everything else →
+  `PesepayApiError`, on which `isEncryptionKeyMismatch()` picks out the 500.
+- **The gateway's words are redacted before they become an error.** Any
+  occurrence of either key in a server `message`, `description` or response body
+  is replaced with `[redacted]`. The gateway is not believed to echo
+  credentials, but errors reach log aggregators and "we checked, it doesn't" is
+  weaker than "it cannot". Tested by having the fake gateway echo both keys.
+- **Fields are `#private`, not `private`.** A TS `private` field is an ordinary
+  enumerable own property at runtime, so `JSON.stringify(pesepay)` would publish
+  both keys. `#` fields are invisible to it — asserted.
+- **Callback URLs are validated client-side**, because the server will not:
+  `CreateTransactionCommand` substitutes the string `"NONE"` for a blank one, so
+  the transaction is created and the outcome is simply never delivered. Blank
+  and whitespace-only are rejected with that explanation, not just with "does
+  not parse".
+- **`customer` is unconditional on seamless payments**, and the request type
+  makes it non-optional — a mutation that sent it conditionally failed to
+  compile rather than failing a test, which is the better place for that
+  invariant.
+- **A malformed 2xx is reported as `PesepayApiError`**, so the HTTP status stays
+  on the error either way. It deliberately carries **no** `responseBody`: by
+  that point the body is decrypted, and decrypted transaction data is customer
+  data.
+- **Absent options are omitted, never sent as `null`** — the server's
+  `@NotBlank` validators and its `"NONE"` substitution treat missing and null
+  differently.
+- **`checkPayment` builds its query through `URL`.** v1 concatenated the
+  reference raw, so one containing `&`, `#` or a space produced a silently
+  different request.
+
+### Mutation testing — ten injected, ten caught
+
+As in stage 3, "all green" was checked rather than assumed:
+
+| mutation | result |
+|---|---|
+| decrypt before checking the status | **7 failures** — every error-mapping test |
+| send the request body as cleartext | **7 failures** |
+| skip redaction of the server's words | **2 failures** |
+| swap `paid` and `isTerminal` | **2 failures** |
+| drop the `key` header | **2 failures** |
+| treat 403/404 as ordinary API errors | **2 failures** |
+| v1's raw query-string concatenation | **1 failure** |
+| accept a blank `resultUrl` | **survived at first** — see below |
+| send `customer` conditionally | **compile error** (TS2375) |
+| identity `#redact` with a type change | **compile error** (TS2339) |
+
+The blank-`resultUrl` mutant survived the first round: `''` still threw, but
+via `new URL('')` with a message about parsing rather than about `"NONE"`.
+Since that explanation *is* the reason the check exists client-side, a test now
+pins it, and the mutant dies.
+
+Tarball is **53 files / 49.6 KB packed**, still nothing outside `dist/`, `src/`,
+`package.json`, `README`, `LICENSE`. No test files, no `scripts/`.
+
+### Touched from stage 3
+
+Two TSDoc corrections in `errors.ts`, no behaviour change: `PesepayApiError`
+now also documents the malformed-2xx case, and `PesepayConfigError` documents
+that it covers per-call arguments (a negative amount, a customer-less seamless
+payment) as well as construction.
 
 ## Open items needing input
 

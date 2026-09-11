@@ -13,6 +13,7 @@
  * stage 6 — so they are reached by path.
  */
 import { createRequire } from 'node:module';
+import type * as ClientModule from '../../src/client.ts';
 import type * as CryptoModule from '../../src/crypto.ts';
 import type * as ErrorsModule from '../../src/errors.ts';
 import type * as TransportModule from '../../src/internal/transport.ts';
@@ -20,6 +21,7 @@ import type * as StatusModule from '../../src/status.ts';
 
 const require_ = createRequire(import.meta.url);
 
+export const client: typeof ClientModule = require_('../../dist/client.js');
 export const crypto: typeof CryptoModule = require_('../../dist/crypto.js');
 export const errors: typeof ErrorsModule = require_('../../dist/errors.js');
 export const status: typeof StatusModule = require_('../../dist/status.js');

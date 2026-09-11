@@ -55,7 +55,9 @@ export interface PesepayApiErrorInit {
 const MAX_RETAINED_BODY = 2048;
 
 /**
- * The gateway returned a non-2xx status.
+ * The gateway returned a non-2xx status — or a 2xx whose body was not the
+ * documented shape, which is reported the same way so the HTTP status stays
+ * available on the error either way.
  *
  * The status codes are not what you would guess, and these mappings are read
  * off the Java server:
@@ -170,10 +172,11 @@ export class PesepayTimeoutError extends PesepayNetworkError {
 }
 
 /**
- * The SDK was configured wrongly — a missing or malformed key, an absent
- * `resultUrl`, a non-https base URL. Thrown eagerly, before any network call:
- * none of these are fixable at runtime, and failing at construction is cheaper
- * than failing mid-checkout.
+ * The SDK was configured or called wrongly — a missing or malformed key, an
+ * absent `resultUrl`, a non-https base URL, a negative amount, a seamless
+ * payment with no customer. Thrown eagerly, before any network call: none of
+ * these are fixable at runtime, and failing at construction (or at the top of
+ * the method) is cheaper than failing mid-checkout.
  */
 export class PesepayConfigError extends PesepayError {
   override readonly name: string = 'PesepayConfigError';
