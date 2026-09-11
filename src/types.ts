@@ -224,3 +224,109 @@ export type InvoiceStatus =
   | 'PAYMENT_FAILED'
   | 'CANCELLED'
   | 'PAYMENT_CANCELED_BY_PAYER';
+
+/**
+ * How often a recurring invoice is regenerated. `EVERY_YEARLY` is the server's
+ * spelling, not a typo here.
+ */
+export type RecurringFrequency =
+  | 'DAILY'
+  | 'EVERY_MONTH'
+  | 'EVERY_THREE_MONTHS'
+  | 'EVERY_FOUR_MONTHS'
+  | 'EVERY_SIX_MONTHS'
+  | 'EVERY_YEARLY';
+
+/**
+ * Who the invoice is addressed to. `name` and `email` are both non-null columns
+ * server-side, so neither is really optional; `phoneNumber` is.
+ *
+ * The payer is emailed the invoice, which is the difference between an invoice
+ * and a plain transaction: Pesepay, not you, delivers the payment link.
+ */
+export interface InvoicePayer {
+  name: string;
+  email: string;
+  phoneNumber?: string;
+}
+
+/**
+ * Body of `POST /v1/payments/invoice/initiate`, before encryption. The server
+ * calls it `CreateInvoiceCommand`.
+ *
+ * Two of these field names are traps:
+ *
+ * - **`currencyCode` is a string here but a `Currency` object on the response.**
+ *   The Java field is `Currency currency` annotated `@JsonProperty("currencyCode")`
+ *   with a deserialiser that looks the code up, so the request key is
+ *   `currencyCode` and the reply key is `currency`.
+ * - **Dates are `MM/dd/yyyy`**, not ISO-8601 — a custom `LocalDateDeserializer`,
+ *   not Jackson's default. `2026-09-11` does not parse.
+ */
+export interface CreateInvoiceRequest {
+  payer: InvoicePayer;
+  amount: number;
+  /** What the invoice is for. Shown to the payer. Rejected if it contains HTML. */
+  narrative: string;
+  /** Just the code — `'USD'`. See the note above about the asymmetry. */
+  currencyCode: string;
+  /**
+   * Which of your applications the invoice belongs to. Required in practice:
+   * the server resolves the application from this field alone and never from
+   * the integration key.
+   */
+  applicationCode?: string;
+  /** `MM/dd/yyyy`. When Pesepay should send the invoice to the payer. */
+  processingDate: string;
+  /** `MM/dd/yyyy`. */
+  dueDate: string;
+  recurringPayment?: boolean;
+  /** Required by the server whenever `recurringPayment` is `true`. */
+  recurringFrequency?: RecurringFrequency;
+  resultUrl?: string;
+  returnUrl?: string;
+  /** Your own identifier. The server enforces that it is unique. */
+  initiatorReference?: string;
+}
+
+/**
+ * The decrypted body of a successful `POST /v1/payments/invoice/initiate` — the
+ * server's `Invoice` entity, serialised whole.
+ *
+ * Because it is an entity rather than a purpose-built DTO, it carries more than
+ * an invoice needs: JPA auditing columns, and a nested `application` object.
+ * Only the fields worth relying on are named below; the rest survive as index
+ * signature entries.
+ */
+export interface Invoice {
+  /**
+   * The invoice's identity everywhere else — it is the reference number the
+   * transaction is created under, and it is what `pollUrl` carries.
+   */
+  invoiceNumber: string;
+  /** Already carries `?invoiceNumber=…` — *not* `?referenceNumber=`. */
+  pollUrl?: string;
+  invoiceStatus?: InvoiceStatus;
+  /** Echoed back from the request. */
+  initiatorReference?: string;
+  amount?: number;
+  narrative?: string;
+  /** The full currency record, not the code you sent. */
+  currency?: Currency;
+  payer?: InvoicePayer;
+  /** `MM/dd/yyyy`, the same format the request uses. */
+  processingDate?: string;
+  dueDate?: string;
+  recurringPayment?: boolean;
+  recurringFrequency?: RecurringFrequency;
+  processed?: boolean;
+  cancelled?: boolean;
+  reasonForCancellation?: string;
+  cancelledBy?: string;
+  payerNotified?: boolean;
+  resultUrl?: string;
+  returnUrl?: string;
+  /** Opaque and encrypted server-side; not the `invoiceNumber`. */
+  id?: string;
+  [key: string]: unknown;
+}

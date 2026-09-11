@@ -39,6 +39,7 @@
  * @packageDocumentation
  */
 
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { assertValidEncryptionKey, decryptPayload, encryptPayload } from './crypto.js';
 import {
   PesepayApiError,
@@ -54,11 +55,17 @@ import {
 } from './internal/transport.js';
 import { isPaid, isTerminal } from './status.js';
 import type {
+  CreateInvoiceRequest,
   CreateTransactionRequest,
+  Currency,
   CustomerDetails,
   EncryptedEnvelope,
   InitiateTransactionResponse,
+  Invoice,
+  InvoicePayer,
+  PaymentMethod,
   PaymentTransactionResult,
+  RecurringFrequency,
   SeamlessPaymentRequest,
 } from './types.js';
 
@@ -75,6 +82,20 @@ export const DEFAULT_TIMEOUT_MS: number = 30_000;
 const INITIATE_PATH = '/v1/payments/initiate';
 const SEAMLESS_PAYMENT_PATH = '/v2/payments/make-payment';
 const CHECK_PAYMENT_PATH = '/v1/payments/check-payment';
+const INVOICE_INITIATE_PATH = '/v1/payments/invoice/initiate';
+const INVOICE_CHECK_PATH = '/v1/payments/invoice/check';
+
+// The catalogue. Plain JSON, and permitAll() server-side — see
+// `Pesepay.getPaymentMethods` for why no credential goes with them.
+const ACTIVE_CURRENCIES_PATH = '/v1/currencies/active';
+const PAYMENT_METHODS_FOR_CURRENCY_PATH = '/v1/payment-methods/for-currency';
+const ACTIVE_PAYMENT_METHODS_PATH = '/v1/payment-methods/all-active';
+
+/** `MM/DD/YYYY` — what the invoice endpoint parses, and nothing else. */
+const GATEWAY_DATE_PATTERN = /^(\d{2})\/(\d{2})\/(\d{4})$/;
+
+/** Accepted as input and converted, because JavaScript dates arrive like this. */
+const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 const REDACTED = '[redacted]';
 
@@ -142,6 +163,77 @@ export interface SeamlessPaymentOptions {
   resultUrl?: string | undefined;
   /** Defaults to `resultUrl` server-side when omitted. */
   returnUrl?: string | undefined;
+}
+
+export interface InitiateInvoiceOptions {
+  /** Major units. */
+  amount: number;
+  currencyCode: string;
+  /** What the invoice is for. The payer reads this. No HTML. */
+  narrative: string;
+  /** Who to bill. Both `name` and `email` are required. */
+  payer: InvoicePayer;
+  /**
+   * Which of your applications owns the invoice. **Required** — the gateway
+   * resolves it from this field and not from the integration key.
+   */
+  applicationCode: string;
+  /**
+   * When Pesepay sends the invoice to the payer. A `Date` (read in UTC), an
+   * ISO `'YYYY-MM-DD'`, or the gateway's `'MM/DD/YYYY'`.
+   */
+  processingDate: Date | string;
+  /** When payment is due. Same three accepted forms. */
+  dueDate: Date | string;
+  /** Regenerate the invoice on a schedule. Needs `recurringFrequency`. */
+  recurring?: boolean | undefined;
+  recurringFrequency?: RecurringFrequency | undefined;
+  /** Your own identifier. The gateway rejects a duplicate. */
+  initiatorReference?: string | undefined;
+  /** Overrides {@link Pesepay.resultUrl} for this call only. */
+  resultUrl?: string | undefined;
+  /** Overrides {@link Pesepay.returnUrl} for this call only. */
+  returnUrl?: string | undefined;
+}
+
+/**
+ * A frozen {@link Invoice}. `invoiceNumber` is the handle for everything
+ * afterwards — {@link Pesepay.checkInvoice} takes it, and `pollUrl` embeds it.
+ */
+export type InvoiceResult = Readonly<Invoice>;
+
+/**
+ * Request headers in Node's `IncomingHttpHeaders` shape. Express's `req.headers`
+ * satisfies this, as does a plain object; names are matched case-insensitively.
+ */
+export type CallbackHeaders = Readonly<Record<string, string | string[] | undefined>>;
+
+/**
+ * Why {@link CallbackVerification.keyVerified} came out the way it did.
+ *
+ * - `'matched'` — the `Authorization` header held your integration key.
+ * - `'mismatched'` — a header was present and held something else. Either a key
+ *   you have since rotated, or a request that did not come from Pesepay.
+ * - `'absent'` — no `Authorization` header at all. The gateway sends none when
+ *   *its* lookup of your integration key fails, and posts the body regardless,
+ *   so this is as likely to be a misconfiguration on your account as an
+ *   unsolicited request.
+ */
+export type CallbackKeyStatus = 'matched' | 'mismatched' | 'absent';
+
+/** What {@link Pesepay.parseCallback} returns. Frozen. */
+export interface CallbackVerification {
+  /** The decoded result, with `paid` and `isTerminal` derived as usual. */
+  readonly result: PaymentResult;
+  /**
+   * `true` only when the header was present and matched, compared in constant
+   * time. **Not** a signature: see {@link Pesepay.parseCallback}. Never act on
+   * a callback without re-reading the transaction through
+   * {@link Pesepay.checkPayment}, whatever this says.
+   */
+  readonly keyVerified: boolean;
+  /** Which of the three cases produced `keyVerified`. */
+  readonly keyStatus: CallbackKeyStatus;
 }
 
 /**
@@ -398,6 +490,303 @@ export class Pesepay {
     return toPaymentResult(decoded, { status: 200, method: 'GET', url });
   }
 
+  /**
+   * The currencies your account can transact in.
+   *
+   * Plain JSON, and **not** encrypted — the `{ payload }` envelope covers
+   * `/v1/payments/*` and `/v2/payments/*` only. This endpoint is also
+   * `permitAll()` server-side, so no credential is sent with it; see
+   * {@link Pesepay.getPaymentMethods} for why that is deliberate.
+   *
+   * Use it to populate a currency selector, and to fail early: a
+   * `currencyCode` your account is not configured for is rejected at initiate
+   * time, several steps further into a checkout than here.
+   *
+   * @throws {PesepayApiError} Any non-2xx, or a body that is not an array.
+   * @throws {PesepayNetworkError} If no response arrived at all.
+   */
+  async getActiveCurrencies(): Promise<Currency[]> {
+    const url = this.#endpoint(ACTIVE_CURRENCIES_PATH);
+    const decoded = await this.#exchangePlain('GET', url);
+    return readCatalogue<Currency>(decoded, 'currency', { status: 200, method: 'GET', url });
+  }
+
+  /**
+   * The payment methods that accept a given currency.
+   *
+   * Read three fields off each one before you charge it:
+   *
+   * - **`redirectRequired`** — when `true`, the method *cannot* be charged
+   *   through {@link Pesepay.makeSeamlessPayment} at all. The customer must be
+   *   sent to the hosted page via {@link Pesepay.initiateTransaction}. This is
+   *   the single most useful field here, and there is no other way to know.
+   * - **`requiredFields`** — what a seamless charge must collect. Each entry's
+   *   `name` is the key to use in `requiredFields` on the request; its
+   *   `displayName` is for your UI. Sending an incomplete set fails
+   *   server-side, not here.
+   * - **`minimumAmount` / `maximumAmount`** — checkable before the call rather
+   *   than after.
+   *
+   * Plain JSON, not the envelope. **No credential is sent**: the gateway
+   * declares this path, `/v1/payment-methods/all-active` and
+   * `/v1/currencies/active` as `permitAll()`, so the integration key would buy
+   * nothing, and a bearer credential is not worth sending to an endpoint that
+   * does not ask for it. If Pesepay ever secures these, the call answers
+   * `401`/`403` through {@link PesepayAuthError}, and this is the decision to
+   * revisit.
+   *
+   * @param currencyCode A `code` from {@link Pesepay.getActiveCurrencies}.
+   */
+  async getPaymentMethods(currencyCode: string): Promise<PaymentMethod[]> {
+    const code = assertNonBlank(currencyCode, 'currencyCode');
+
+    const url = new URL(`${this.#baseUrl}${PAYMENT_METHODS_FOR_CURRENCY_PATH}`);
+    url.searchParams.set('currencyCode', code);
+    const href = url.toString();
+
+    const decoded = await this.#exchangePlain('GET', href);
+    return readCatalogue<PaymentMethod>(decoded, 'payment method', {
+      status: 200,
+      method: 'GET',
+      url: href,
+    });
+  }
+
+  /**
+   * Every active payment method, across all currencies.
+   *
+   * This reads `/v1/payment-methods/all-active`, which is the only unsecured
+   * endpoint returning the full `PaymentMethod` shape. The similarly named
+   * `/v1/payment-methods/active` is **not** it: that one returns a reduced DTO
+   * — name, code, accepted currencies, and required-field *names* only — and
+   * silently drops every method whose `redirectRequired` is true, which makes
+   * "this method does not exist" indistinguishable from "this method needs a
+   * redirect".
+   *
+   * Prefer {@link Pesepay.getPaymentMethods} when you know the currency: each
+   * method here still has to be filtered against its own `currencies` array
+   * before it can be offered.
+   */
+  async getActivePaymentMethods(): Promise<PaymentMethod[]> {
+    const url = this.#endpoint(ACTIVE_PAYMENT_METHODS_PATH);
+    const decoded = await this.#exchangePlain('GET', url);
+    return readCatalogue<PaymentMethod>(decoded, 'payment method', {
+      status: 200,
+      method: 'GET',
+      url,
+    });
+  }
+
+  /**
+   * Creates an invoice: Pesepay emails the payer a payment link and collects
+   * the money on your behalf.
+   *
+   * That is the difference from {@link Pesepay.initiateTransaction} — you do
+   * not present a checkout, and there is no `redirectUrl` to send anyone to.
+   * You get an `invoiceNumber` and a `pollUrl` back, and the payer gets an
+   * email.
+   *
+   * Four things about this endpoint are unlike every other one here:
+   *
+   * 1. **`applicationCode` is required**, and this method enforces it. The
+   *    gateway resolves the owning application from that field rather than
+   *    from your integration key, and answers a `500` when it is absent.
+   * 2. **Dates are `MM/DD/YYYY`**, parsed by a hand-written formatter rather
+   *    than by Jackson, so ISO-8601 does not work on the wire. A `Date`, an
+   *    ISO `'YYYY-MM-DD'` string, or the gateway's own `'MM/DD/YYYY'` are all
+   *    accepted here and converted — a `Date` is read in **UTC**, because
+   *    `new Date('2026-09-11')` is UTC midnight and reading local components
+   *    would report the 10th anywhere west of Greenwich.
+   * 3. **`initiatorReference` must be unique** across your invoices. A repeat
+   *    is rejected server-side, which makes it a usable idempotency key.
+   * 4. **The reply's `pollUrl` carries `?invoiceNumber=`**, not
+   *    `?referenceNumber=`. It is still a valid argument to
+   *    {@link Pesepay.pollTransaction}, which does not care.
+   *
+   * @throws {PesepayConfigError} A missing `applicationCode`, an unparseable
+   *   date, a payer without a name or email, `recurring` without a frequency,
+   *   or a missing `resultUrl`.
+   */
+  async initiateInvoice(options: InitiateInvoiceOptions): Promise<InvoiceResult> {
+    const resultUrl = assertCallbackUrl(options.resultUrl ?? this.resultUrl, 'resultUrl');
+    const returnUrl = options.returnUrl ?? this.returnUrl;
+    if (returnUrl !== undefined) assertCallbackUrl(returnUrl, 'returnUrl');
+
+    const recurringPayment = options.recurring === true;
+    if (recurringPayment && options.recurringFrequency === undefined) {
+      throw new PesepayConfigError(
+        'recurringFrequency is required when recurring is true. The gateway asserts ' +
+          'it with requireNonNull rather than validating it, so omitting it answers ' +
+          '500 instead of a validation message.',
+      );
+    }
+
+    const request: CreateInvoiceRequest = {
+      payer: assertPayer(options.payer),
+      amount: assertAmount(options.amount),
+      narrative: assertNonBlank(options.narrative, 'narrative'),
+      currencyCode: assertNonBlank(options.currencyCode, 'currencyCode'),
+      applicationCode: assertApplicationCode(options.applicationCode),
+      processingDate: toServerDate(options.processingDate, 'processingDate'),
+      dueDate: toServerDate(options.dueDate, 'dueDate'),
+      recurringPayment,
+      resultUrl,
+      ...optional('returnUrl', returnUrl),
+      ...optional('recurringFrequency', recurringPayment ? options.recurringFrequency : undefined),
+      ...optional('initiatorReference', options.initiatorReference),
+    };
+
+    const url = this.#endpoint(INVOICE_INITIATE_PATH);
+    const decoded = await this.#exchange('POST', url, request);
+    return toInvoiceResult(decoded, { status: 200, method: 'POST', url });
+  }
+
+  /**
+   * Reads the current state of an invoice's payment.
+   *
+   * Returns a {@link PaymentResult}, not an invoice: the gateway answers this
+   * with the same `PaymentTransactionResult` that {@link Pesepay.checkPayment}
+   * returns, because an invoice's `invoiceNumber` *is* the reference number of
+   * the transaction created when the payer pays. So `paid` and `isTerminal`
+   * mean exactly what they mean everywhere else.
+   *
+   * Equivalent to `pollTransaction(invoice.pollUrl)`, and preferable when all
+   * you kept was the invoice number.
+   */
+  async checkInvoice(invoiceNumber: string): Promise<PaymentResult> {
+    const invoice = assertNonBlank(invoiceNumber, 'invoiceNumber');
+
+    const url = new URL(`${this.#baseUrl}${INVOICE_CHECK_PATH}`);
+    url.searchParams.set('invoiceNumber', invoice);
+
+    return this.pollTransaction(url.toString());
+  }
+
+  /**
+   * Decodes the callback Pesepay POSTs to your `resultUrl`, and reports
+   * whether the request carried your integration key.
+   *
+   * ## Read this before you credit anything
+   *
+   * **The callback is not authenticated.** There is no HMAC and no signature —
+   * not a weak one, none. The only credential is an `Authorization` header
+   * holding your integration key verbatim, and the gateway **omits that header
+   * entirely** when its own key lookup fails, posting the body anyway. So a
+   * `keyVerified: false` result is a body that anyone could have sent you.
+   *
+   * `keyVerified: true` proves only that the sender knew your integration key.
+   * That is a shared secret you also put in an outbound header on every API
+   * call, so it is evidence, not proof, and it says nothing at all about the
+   * *contents* being untampered.
+   *
+   * **So: treat a callback as a hint that something changed, never as the fact
+   * of payment.** The safe handler is short:
+   *
+   * ```ts
+   * app.post('/pesepay/webhook', express.json(), async (req, res) => {
+   *   // 1. Answer immediately. There are no retries — a slow or failing
+   *   //    response loses the notification permanently.
+   *   res.sendStatus(200);
+   *
+   *   const { result, keyVerified } = pesepay.parseCallback(req.body, req.headers);
+   *   if (!keyVerified) log.warn('unverified pesepay callback', result.referenceNumber);
+   *
+   *   // 2. Re-verify over the authenticated, encrypted API before acting.
+   *   const confirmed = await pesepay.checkPayment(result.referenceNumber);
+   *
+   *   // 3. Be idempotent on referenceNumber + transactionStatus.
+   *   await creditOnce(confirmed.referenceNumber, confirmed.transactionStatus, confirmed);
+   * });
+   * ```
+   *
+   * Each numbered step answers a specific property of this gateway:
+   *
+   * - **No retries.** The server posts once, catches every exception, logs it,
+   *   and moves on. A 500 from your handler, a timeout, a deploy mid-post — the
+   *   notification is gone for good, and only polling recovers it. So never do
+   *   work before responding.
+   * - **Re-verify.** {@link Pesepay.checkPayment} is encrypted, authenticated
+   *   by your key in an *outbound* header, and answered by the gateway. It is
+   *   the only channel here that actually establishes what happened.
+   * - **Idempotency is mandatory, not defensive.** The callback fires on every
+   *   terminal status change, so a transaction that succeeds and is later
+   *   reversed delivers **two** callbacks for one reference number — `SUCCESS`
+   *   and then `REVERSED`. A handler keyed on `referenceNumber` alone either
+   *   ignores the reversal or double-credits the success. Key on the pair.
+   *
+   * ## What it accepts
+   *
+   * The body as a parsed object (`express.json()`), a JSON string, or the raw
+   * `Buffer`/`Uint8Array`. Unlike every other response from this gateway the
+   * callback is **plain, unencrypted JSON** — not the `{ payload }` envelope —
+   * so nothing here is decrypted, and a body that *is* an envelope is rejected
+   * with that explanation rather than quietly mis-parsed.
+   *
+   * `headers` is optional and takes Node's `IncomingHttpHeaders` shape; lookup
+   * is case-insensitive. Omitting it, or passing headers with no
+   * `Authorization`, yields `keyVerified: false`. This never throws over a
+   * missing header: the gateway genuinely sends none when its key lookup
+   * fails, and a webhook endpoint that crashes on that is worse than one that
+   * records it.
+   *
+   * @returns The decoded result, `keyVerified`, and a `keyStatus` separating
+   *   the two ways verification fails. `'absent'` means the gateway could not
+   *   find an integration key for the application — your problem, and a
+   *   configuration one. `'mismatched'` means something presented the wrong
+   *   key, which is either a stale key after a rotation or someone else
+   *   entirely. Alert on them differently.
+   * @throws {PesepayConfigError} If `body` is not a JSON object carrying a
+   *   `referenceNumber` and a `transactionStatus`. Nothing that reaches that
+   *   point should be treated as a transaction result.
+   */
+  parseCallback(body: unknown, headers?: CallbackHeaders): CallbackVerification {
+    const record = decodeCallbackBody(body);
+
+    const transactionStatus = readCallbackString(record, 'transactionStatus');
+    // Not returned, just required: without it there is nothing to reconcile
+    // against, re-verify with, or be idempotent on.
+    readCallbackString(record, 'referenceNumber');
+
+    const keyStatus = classifyPresentedKey(readAuthorization(headers), this.#integrationKey);
+
+    return Object.freeze({
+      result: derivePaymentResult(record, transactionStatus),
+      keyVerified: keyStatus === 'matched',
+      keyStatus,
+    });
+  }
+
+  /**
+   * One round trip with no cryptography at all: send, check the status, parse.
+   *
+   * The catalogue endpoints exchange plain JSON, so this is {@link #exchange}
+   * with the encrypt and decrypt steps removed — and, deliberately, with no
+   * `key` header. Status is still checked before anything else, for the same
+   * reason: a failure body is plain JSON here too, and reporting it as "the
+   * body was not an array" would bury the actual cause.
+   */
+  async #exchangePlain(method: TransportMethod, url: string): Promise<unknown> {
+    const response = await this.#transport({
+      method,
+      url,
+      headers: { accept: 'application/json' },
+      timeoutMs: this.#timeoutMs,
+    });
+
+    const context: ResponseContext = { status: response.status, method, url };
+
+    if (response.status < 200 || response.status >= 300) {
+      throw this.#toApiError(response, context);
+    }
+
+    const decoded = parseJson(response.body);
+    if (decoded === undefined) {
+      throw malformed(context, 'the body is not JSON');
+    }
+
+    return decoded;
+  }
+
   #endpoint(path: string): string {
     return `${this.#baseUrl}${path}`;
   }
@@ -519,6 +908,21 @@ function toPaymentResult(value: unknown, context: ResponseContext): PaymentResul
   // reconciled against — a result without one is not usable.
   readString(record, 'referenceNumber', context);
 
+  return derivePaymentResult(record, transactionStatus);
+}
+
+/**
+ * Freezes a decoded result and answers the two derived questions on it.
+ *
+ * Shared with `parseCallback`, which reaches a validated record by a different
+ * route — the callback is plain JSON and never went through `#exchange` — and
+ * must still produce an identical object. Splitting this is what keeps the
+ * webhook path from drifting away from the polled path.
+ */
+function derivePaymentResult(
+  record: Record<string, unknown>,
+  transactionStatus: string,
+): PaymentResult {
   // Spread first, so the derived fields win whatever the gateway sends.
   return Object.freeze({
     ...record,
@@ -698,4 +1102,274 @@ function normaliseBaseUrl(value: string): string {
   }
 
   return value.replace(/\/+$/, '');
+}
+
+/**
+ * Reads a catalogue array — currencies or payment methods.
+ *
+ * Only `code` is required of each entry, because `code` is the one field you
+ * hand back to the gateway; everything else is presentational, and a method
+ * that gains a field should not fail here. Each entry is frozen, matching
+ * {@link PaymentResult}: a catalogue is a snapshot of what the gateway said.
+ */
+function readCatalogue<T>(value: unknown, label: string, context: ResponseContext): T[] {
+  if (!Array.isArray(value)) {
+    throw malformed(context, `the body was not a JSON array of ${label} records`);
+  }
+
+  return value.map((entry, index) => {
+    const record = asRecord(entry);
+    if (record === undefined) {
+      throw malformed(context, `${label} ${index} was not a JSON object`);
+    }
+    if (typeof record.code !== 'string' || record.code === '') {
+      throw malformed(context, `${label} ${index} has no code`);
+    }
+    return Object.freeze(record) as T;
+  });
+}
+
+function toInvoiceResult(value: unknown, context: ResponseContext): InvoiceResult {
+  const record = asRecord(value);
+  if (record === undefined) {
+    throw malformed(context, 'the decrypted payload was not a JSON object');
+  }
+
+  // The only field worth failing over: it is the poll parameter, and it is the
+  // reference number the payer's transaction is eventually created under.
+  readString(record, 'invoiceNumber', context);
+
+  return Object.freeze(record) as InvoiceResult;
+}
+
+/**
+ * Turns the gateway's `MM/dd/yyyy` requirement into something callable from
+ * JavaScript, where a calendar date is almost never already in that shape.
+ *
+ * A `Date` is read in **UTC**. That is the load-bearing choice: `new
+ * Date('2026-09-11')` and `JSON.parse` of an ISO date both produce UTC
+ * midnight, and reading local components off those gives the previous day for
+ * every caller west of Greenwich — a due date silently one day early, which
+ * nothing downstream would flag.
+ */
+function toServerDate(value: Date | string, label: string): string {
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      throw new PesepayConfigError(
+        `${label} is an Invalid Date. Whatever produced it did not parse, and the ` +
+          'gateway would receive "NaN/NaN/NaN".',
+      );
+    }
+    return formatServerDate(value.getUTCFullYear(), value.getUTCMonth() + 1, value.getUTCDate());
+  }
+
+  if (typeof value === 'string') {
+    const iso = ISO_DATE_PATTERN.exec(value);
+    if (iso !== null) {
+      return assertCalendarDate(Number(iso[1]), Number(iso[2]), Number(iso[3]), value, label);
+    }
+
+    const gateway = GATEWAY_DATE_PATTERN.exec(value);
+    if (gateway !== null) {
+      return assertCalendarDate(
+        Number(gateway[3]),
+        Number(gateway[1]),
+        Number(gateway[2]),
+        value,
+        label,
+      );
+    }
+  }
+
+  throw new PesepayConfigError(
+    `${label} must be a Date, an ISO "YYYY-MM-DD" string, or the gateway's own ` +
+      `"MM/DD/YYYY" string, but is "${String(value)}". Pesepay parses invoice dates ` +
+      'with a hand-written MM/dd/yyyy formatter rather than with Jackson, so an ' +
+      'ISO-8601 string passed straight through is rejected server-side.',
+  );
+}
+
+/** Rejects 2026-02-30 and friends, which `Date.UTC` would silently roll over. */
+function assertCalendarDate(
+  year: number,
+  month: number,
+  day: number,
+  raw: string,
+  label: string,
+): string {
+  const utc = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    Number.isNaN(utc.getTime()) ||
+    utc.getUTCFullYear() !== year ||
+    utc.getUTCMonth() + 1 !== month ||
+    utc.getUTCDate() !== day
+  ) {
+    throw new PesepayConfigError(
+      `${label} is not a real calendar date: "${raw}". Date arithmetic would roll it ` +
+        'over to a different day rather than reject it, so it is rejected here.',
+    );
+  }
+
+  return formatServerDate(year, month, day);
+}
+
+function formatServerDate(year: number, month: number, day: number): string {
+  const mm = String(month).padStart(2, '0');
+  const dd = String(day).padStart(2, '0');
+  const yyyy = String(year).padStart(4, '0');
+  return `${mm}/${dd}/${yyyy}`;
+}
+
+function assertPayer(payer: InvoicePayer): InvoicePayer {
+  const hasName = typeof payer?.name === 'string' && payer.name.trim() !== '';
+  const hasEmail = typeof payer?.email === 'string' && payer.email.trim() !== '';
+
+  if (!hasName || !hasEmail) {
+    throw new PesepayConfigError(
+      'payer must carry both a name and an email address. Pesepay delivers the ' +
+        'invoice to the payer by email, so one without a deliverable address is ' +
+        'never presented to anybody, and both are non-null columns server-side.',
+    );
+  }
+
+  return payer;
+}
+
+function assertApplicationCode(applicationCode: string): string {
+  if (typeof applicationCode !== 'string' || applicationCode.trim() === '') {
+    throw new PesepayConfigError(
+      'applicationCode is required for an invoice. Unlike every other endpoint in ' +
+        'this SDK, the gateway resolves the owning application from this field ' +
+        'rather than from your integration key, and answers 500 rather than a ' +
+        'validation message when it is missing.',
+    );
+  }
+
+  return applicationCode;
+}
+
+/**
+ * Accepts the three shapes a webhook body arrives in — a parsed object, a JSON
+ * string, or the raw bytes — and refuses everything else by name, because the
+ * alternative is a webhook handler that silently treats garbage as a payment.
+ */
+function decodeCallbackBody(body: unknown): Record<string, unknown> {
+  let value: unknown = body;
+
+  // Covers Buffer, which is a Uint8Array.
+  if (value instanceof Uint8Array) {
+    value = new TextDecoder().decode(value);
+  }
+
+  if (typeof value === 'string') {
+    if (value.trim() === '') {
+      throw callbackError(
+        'the body was empty. If you are using a body parser, make sure it runs on ' +
+          'this route: express.json() leaves req.body undefined when the request ' +
+          'carries no content-type it recognises.',
+      );
+    }
+
+    const parsed = parseJson(value);
+    if (parsed === undefined) {
+      throw callbackError('the body was not JSON');
+    }
+    value = parsed;
+  }
+
+  const record = asRecord(value);
+  if (record === undefined) {
+    throw callbackError(
+      `the body was not a JSON object (it was ${describeType(body)}). The callback is ` +
+        'a PaymentTransactionResult; pass req.body, the raw string, or the raw Buffer',
+    );
+  }
+
+  // A body that is an envelope means something upstream is wrong, and saying so
+  // is worth more than "it has no referenceNumber". Every *other* payments
+  // endpoint is enveloped, so this is a natural mistake to make.
+  if (typeof record.payload === 'string' && Object.keys(record).length === 1) {
+    throw callbackError(
+      'the body is a { "payload": "…" } envelope, but the callback is never ' +
+        'encrypted — the gateway POSTs a plain PaymentTransactionResult to your ' +
+        'resultUrl. Something has re-wrapped it, or this is a response from an API ' +
+        'call rather than a callback.',
+    );
+  }
+
+  return record;
+}
+
+function readCallbackString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  if (typeof value !== 'string' || value === '') {
+    throw callbackError(`it has no ${key}`);
+  }
+  return value;
+}
+
+function callbackError(detail: string): PesepayConfigError {
+  return new PesepayConfigError(
+    `This is not a Pesepay callback body — ${detail}. Nothing about it has been ` +
+      'treated as a transaction result.',
+  );
+}
+
+/** Phrases a rejected body's type with its article, for the error message. */
+function describeType(value: unknown): string {
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
+  if (Array.isArray(value)) return 'an array';
+  return `a ${typeof value}`;
+}
+
+/**
+ * Finds the `Authorization` header whatever case it arrived in.
+ *
+ * A repeated header reaches Node as an array. More than one `Authorization` is
+ * not something the gateway sends, so rather than picking one and comparing it,
+ * the whole thing is treated as absent — the merged case is exactly the shape a
+ * header-injection attempt takes, and "no key was presented" is the honest
+ * reading of it.
+ */
+function readAuthorization(headers: CallbackHeaders | undefined): string | undefined {
+  if (headers === undefined || headers === null || typeof headers !== 'object') {
+    return undefined;
+  }
+
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() !== 'authorization') continue;
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value) && value.length === 1) return value[0];
+    return undefined;
+  }
+
+  return undefined;
+}
+
+function classifyPresentedKey(presented: string | undefined, expected: string): CallbackKeyStatus {
+  if (presented === undefined) return 'absent';
+  return secretsMatch(presented, expected) ? 'matched' : 'mismatched';
+}
+
+/**
+ * Constant-time string comparison that does not leak length.
+ *
+ * `timingSafeEqual` throws outright on operands of different lengths, so the
+ * naive version needs a length check in front of it — and that check both
+ * short-circuits and tells an attacker the key's length, which is the first
+ * thing they would want. Hashing each side to a fixed 32 bytes removes the
+ * length signal completely and leaves one constant-time comparison over equal
+ * buffers. The hash is not for secrecy; it is for making both operands the same
+ * size no matter what was presented.
+ *
+ * The comparison is verbatim — no `Bearer` prefix is stripped and nothing is
+ * trimmed, because the gateway sets the header to the raw integration key, and
+ * leniency here would only widen what counts as a match.
+ */
+function secretsMatch(presented: string, expected: string): boolean {
+  const left = createHash('sha256').update(presented, 'utf8').digest();
+  const right = createHash('sha256').update(expected, 'utf8').digest();
+  return timingSafeEqual(left, right);
 }
