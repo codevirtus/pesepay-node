@@ -15,7 +15,7 @@ for where things stand — update it at the end of every stage.
 | 3 | Crypto + transport | ✅ done |
 | 4 | Payments client | ✅ done |
 | 5 | Catalogue, invoices, webhook | ✅ done |
-| 6 | Entry points + v1 compat layer | ⬜ not started |
+| 6 | Entry points + v1 compat layer | ✅ done |
 | 7 | Docs | ⬜ not started |
 | 8 | CI + release | ⬜ not started |
 
@@ -497,6 +497,178 @@ first round and the test was written to kill it.
 | invoice request key is `currency` | **compile error** (TS2353) |
 
 Tarball is **53 files / 69.2 KB packed**, still nothing outside `dist/`, `src/`,
+`package.json`, `README`, `LICENSE`. No test files, no `scripts/`.
+
+## Stage 6 — done
+
+The package is wired up. `src/index.ts` (99 lines) is the public CJS entry,
+`src/index.mts` the ESM wrapper, `src/compat/v1.ts` (310 lines) the
+`pesepay/v1-compat` layer, plus 50 new tests. `npm run verify` is green end to
+end: lint, typecheck, build, **264 tests**, `publint --strict`, `attw` clean in
+every resolution mode.
+
+### The public surface, and what was deliberately left out
+
+Exported from `pesepay`: `Pesepay` and its option/result types,
+`DEFAULT_BASE_URL`, `DEFAULT_TIMEOUT_MS`, the seven error classes with
+`PesepayErrorCode` and `PesepayApiErrorInit`, all eight of `status.ts`, the
+`Transport` seam (`createHttpsTransport`, `httpsTransport` and its four types),
+sixteen wire types, and `VERSION`. Twenty-one values and thirty-one types.
+
+Three things were kept internal, on the principle that adding an export later is
+non-breaking and removing one is not:
+
+- **`crypto.ts` entirely** — `encryptPayload`, `decryptPayload`,
+  `assertValidEncryptionKey`. Raw AES-256-CBC with no integrity protection is
+  not a primitive to hand out, and nothing public needs it. It still ships in
+  `dist/`, reachable by path; it is simply not part of the API.
+- **The `*Request` wire shapes** — `CreateTransactionRequest`,
+  `SeamlessPaymentRequest`, `CreateInvoiceRequest` — plus `AmountRequest` and
+  `EncryptedEnvelope`. No public method takes one; they are built internally
+  from the `*Options` types. Exporting them would advertise an input format that
+  is not an input, and pin this package to the gateway's *request* shape as a
+  compatibility promise on top of its response shape.
+- Both are pinned by tests, so re-exporting either is a failure rather than a
+  review comment.
+
+### The dual-package hazard is real, and now measured
+
+`esm.Pesepay === cjs.Pesepay` is the load-bearing assertion in
+`test/dist/exports.test.mts`, and it was checked against the failure it exists
+to prevent: copying `dist/` to a second directory and requiring both gives
+`a.PesepayError === b.PesepayError` → `false`, and a `PesepayConfigError` thrown
+by one is **not** `instanceof` the other's. That is exactly what a `tsup` /
+`unbuild` / two-`tsc` build ships, and it is silent — it shows up only in a
+mixed-module application, as a `catch` that stops matching.
+
+The tests assert identity for all 21 value exports, and `instanceof` in both
+directions across the boundary: thrown by `require`, caught by `import`, and the
+reverse.
+
+### `export *` really does leak, and the parity test is the guard
+
+The stage-2 probe's finding stands: star-re-exporting a CommonJS module copies
+`__esModule` and `module.exports` into the ESM namespace. Both wrappers list
+every name explicitly instead.
+
+The cost of an explicit list is that a name added to `index.ts` and forgotten in
+`index.mts` is invisible until a consumer imports it. So the test compares
+`Object.keys` of the two module objects and requires them equal, for both entry
+points — the mutation "drop `isPaid` from the `.mts` list" dies there.
+
+Also pinned: `dist/*.js` requires nothing but `node:` builtins and relative
+paths, and `VERSION` matches `package.json`.
+
+### v1 compat — read off the `v1` branch, not inferred
+
+The `v1` branch and `pesepay-nodejs-integration/` are byte-identical modulo line
+endings, so the branch is canonical. Reproduced: `Pesepay` with
+`createTransaction`, `createPayment`, `initiateTransaction`,
+`makeSeamlessPayment`, `checkPayment`, `pollTransaction`, the mutable
+`resultUrl` / `returnUrl` properties, and the `PesepayResponse`, `Transaction`,
+`Payment`, `Customer`, `Amount` classes with v1's endpoint constants.
+
+`const { Pesepay } = require('pesepay/v1-compat')` is the only line that
+changes. Five details of v1 that a paraphrase would have lost:
+
+1. **Two failures v1 threw rather than folded.** The `resultUrl == null` and
+   `returnUrl == null` checks sat *before* its `try`. They still throw, with the
+   messages verbatim — `'Result url has not beeen specified.'`, typo included —
+   and as a plain `Error`, not a `PesepayConfigError`. A test asserts no request
+   is sent when one fires.
+2. **The methods are own properties holding arrow functions**, so
+   `const { checkPayment } = pesepay` still works. A `prototype` method would
+   have lost `this`.
+3. **v1 mutated the caller's objects.** `initiateTransaction` wrote both URLs
+   onto the transaction; `makeSeamlessPayment` wrote `resultUrl`, `returnUrl`,
+   `reasonForPayment`, a fresh `amountDetails` and both required-field maps onto
+   the payment. Callers could observe all of it, so it is reproduced.
+4. **`redirectUrl` is only ever set by `initiateTransaction`.** v1 read
+   `resObj.redirectUrl` on polls too, where the server has it commented out —
+   so it was always `undefined` there, and it stays `undefined` here even if the
+   gateway starts sending one.
+5. **`error.message ?? 'Something went wrong!'`**, including that a thrown
+   non-`Error` yields the fallback.
+
+Two deliberate departures, both improvements v1 could not object to:
+`checkPayment` goes through the modern `URL`-built query rather than v1's raw
+concatenation (a reference containing `&` or a space produced a different
+request), and a third optional constructor argument takes `{ baseUrl, timeoutMs,
+transport }` — sandbox, a budget v1 never had, and the seam the tests drive.
+
+### Why the modern client is constructed lazily
+
+v2 validates the encryption key eagerly, in the constructor. v1 validated
+nothing: with a malformed key it failed per call and returned
+`{ success: false }`. Validating in the compat constructor would turn a degraded
+integration into a crash at startup — the opposite of "change one line".
+
+So `Pesepay.client` builds the modern client on first use, inside the fold. It
+is also the migration ramp: it hands back the real v2 client, so call sites move
+one at a time without a second object holding the same two secrets.
+
+### The fold, and the table that proves it
+
+v1 code has no `catch`, so a typed error escaping this layer is a crash in an
+application that used to keep running. Every error class is provoked
+deliberately and asserted to fold — and from **all four** async methods, not
+just one:
+
+| provoked | folds |
+|---|---|
+| `PesepayApiError` (400) | ✅ |
+| `PesepayAuthError` (404 unknown key, 403 disabled) | ✅ |
+| `PesepayApiError` (500, `"Failed to decrypt your data"`) | ✅ |
+| `PesepayCryptoError` (response encrypted with another key) | ✅ |
+| `PesepayNetworkError` | ✅ |
+| `PesepayTimeoutError` | ✅ |
+| `PesepayConfigError` (negative amount) | ✅ |
+| `PesepayConfigError` (malformed key, at lazy construction) | ✅ |
+| a plain `Error` | ✅ — its own message |
+| a thrown string | ✅ — `'Something went wrong!'` |
+
+Each row first asserts the error **is** the class it claims, through
+`pesepay.client`, before asserting the fold. Without that, a client that stopped
+throwing the error would leave every fold assertion passing and proving nothing.
+
+And the redaction from stage 4 is re-pinned at this boundary: a gateway that
+echoes both keys must not put either into a `{ success: false }` message, which
+is now a string a v1 application logs.
+
+### Mutation testing — fifteen injected, fifteen caught
+
+| mutation | result |
+|---|---|
+| `pollTransaction` stops folding | **10 failures** |
+| `fold` reports `success: true` | **10 failures** |
+| `export *` in `index.mts` | **3 failures** |
+| drop `isPaid` from the `.mts` re-export list | **3 failures** |
+| export `encryptPayload` from `index.ts` | **2 failures** |
+| missing `resultUrl` folds instead of throwing | **2 failures** |
+| the payment object is no longer mutated | **2 failures** |
+| `fold` swallows the server's message | **2 failures** |
+| re-export the `*Request` wire shapes | 1 failure |
+| `paid` derived from `isTerminal` | 1 failure |
+| eager construction of the modern client | 1 failure |
+| `redirectUrl` passed through from a poll | 1 failure |
+| `createPayment` accepts neither email nor phone | 1 failure |
+| the customer object forwarded whole | **survived at first** — see below |
+
+The customer mutant survived because the behaviour it broke was
+`JSON.stringify`'s, not ours: `{ ...customer }` forwards `email: undefined`, and
+`JSON.stringify` drops it, so the wire was identical. The helper's real job is
+to narrow to the three fields the server declares — v1 serialised the customer
+whole, so anything a caller hung off it went to the gateway too. The comment now
+says that, and a test that sets a stray property on the customer kills the
+mutant.
+
+One more thing checked rather than assumed: the declaration tests strip TSDoc
+before matching. `removeComments` is off for the build, so a type named only in
+prose would otherwise satisfy a search for it — which is exactly how the
+"request shapes stay internal" test failed on its first run, against this
+file's own explanatory comment.
+
+Tarball is **53 files / 81.0 KB packed**, still nothing outside `dist/`, `src/`,
 `package.json`, `README`, `LICENSE`. No test files, no `scripts/`.
 
 ## Open items needing input
