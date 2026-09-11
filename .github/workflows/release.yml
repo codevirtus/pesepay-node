@@ -19,7 +19,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       dist_tag: ${{ steps.version.outputs.dist_tag }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
@@ -68,7 +68,7 @@ jobs:
       contents: write # the GitHub release
       id-token: write # OIDC, for npm Trusted Publishing and provenance
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
