@@ -16,7 +16,7 @@ for where things stand — update it at the end of every stage.
 | 4 | Payments client | ✅ done |
 | 5 | Catalogue, invoices, webhook | ✅ done |
 | 6 | Entry points + v1 compat layer | ✅ done |
-| 7 | Docs | ⬜ not started |
+| 7 | Docs | ✅ done |
 | 8 | CI + release | ⬜ not started |
 
 ## Key decisions (settled — do not re-litigate)
@@ -670,6 +670,99 @@ file's own explanatory comment.
 
 Tarball is **53 files / 81.0 KB packed**, still nothing outside `dist/`, `src/`,
 `package.json`, `README`, `LICENSE`. No test files, no `scripts/`.
+
+## Stage 7 — done
+
+`README.md` (610 lines, rewritten from v1's), `MIGRATION.md` (378),
+`CHANGELOG.md` (174), and the harness that keeps them honest:
+`test/docs/snippets.test.mts` plus `test/fixtures/markdown.mts`. `npm run
+verify` is green end to end — lint, typecheck, build, **268 tests**,
+`publint --strict`, `attw` clean in every resolution mode.
+
+### Every code block is compiled, not proofread
+
+31 fenced blocks across the three documents are extracted into
+`test/docs/generated/` and handed to one `tsc` run. They resolve `pesepay` and
+`pesepay/v1-compat` **by self-reference through the package's own `exports`
+map**, so they are checked against the declarations a consumer installs rather
+than against `src/`. The run costs ~250 ms.
+
+Four things had to be discovered rather than assumed:
+
+- **TypeScript skips dot-directories in `include` globs.** The first attempt
+  generated into `test/docs/.probe/` and got TS18003 "No inputs were found".
+- **`extends` inherits `exclude`.** The root `tsconfig.json` excludes
+  `test/docs/generated` so `npm run typecheck` does not trip over output that
+  only exists mid-test — and the generated config inherited that and excluded
+  itself. It sets `exclude: []` to undo it.
+- **A bare `require()` is typed `any`.** So every `require('x')` is rewritten to
+  `require('x') as typeof import('x')`. Without it the v1 blocks — the ones
+  whose entire promise is that they are unchanged — would have compiled no
+  matter what they said.
+- **`.cts` vs `.mts` is chosen by whether the block calls `require`**, because
+  `.mts` allows the top-level `await` every async example uses, and `.cts` is
+  what makes `require` legal.
+
+A block tagged ```` ```js v1 ```` has `require('pesepay')` redirected to
+`require('pesepay/v1-compat')` and is then compiled. That redirect *is* the
+compat layer's claim — "the import is the only line that changes" — so the test
+performs it mechanically instead of restating it in prose.
+
+Names the documentation elides (`app`, `express`, `log`, `creditOnce`) are
+ambient globals in a generated `globals.d.ts`; `export {}` is appended to every
+snippet so module scope can shadow them, which is what lets a snippet declare
+its own `const pesepay`.
+
+### Mutation testing — five injected, three killed, two were not bugs
+
+| mutation | result |
+|---|---|
+| `currencyCode:` → `currency:` in the seamless example | **caught** — typecheck |
+| import `decryptPayload` (internal) from `pesepay` | **caught twice** — typecheck *and* the public-API test |
+| a `v1` block calling `getActiveCurrencies` | **caught** — typecheck, against the compat declarations |
+| `parseCallback({})` added to a block | survived — and correctly: `body` is `unknown`, so it is valid |
+| the `v1` tag dropped from the construction block | survived — and correctly: `new Pesepay(k, e)` with settable URLs compiles against **both** APIs, which is the compatibility the document claims |
+
+The last two were bad mutations, not gaps. The second is worth keeping in mind:
+a `v1` block that happens to be valid v2 will pass either way, so the tag is a
+statement about intent that the harness cannot check.
+
+### `PUBLIC_VALUES` moved, and is now read from both ends
+
+The arrays live in `test/fixtures/public-api.mts`; `test/dist/exports.test.mts`
+imports them. Two tests now read the one list from opposite directions —
+exports asserts every name exists in both flavours, docs asserts the markdown
+imports nothing that is *not* there. A name the docs need must be added to
+`src/index.ts` and to that file together, or one of the two fails.
+
+(Exporting the arrays from `exports.test.mts` itself would have re-registered
+its 20-odd tests inside the docs test's process. A fixture is the only way to
+share them.)
+
+### The documentation's own claims, checked against the source
+
+- The `403` / `404` / `500` table, `isRetryable()`, and "a timeout is not a
+  failed payment" are taken from `errors.ts`, not paraphrased.
+- The Express handler is `parseCallback`'s TSDoc verbatim, with each of the
+  three steps tied in a table to the property of
+  `PaymentTransactionResultPosterImpl` that forces it.
+- **The historical changelog entries were read off git rather than invented.**
+  The first draft dated 1.0.3 to 2023 and credited it with a
+  `setRequiredFields` change that already existed at its parent commit. What
+  1.0.3 (2021-10-25) actually did was introduce `PesepayResponse`; what 1.0.4
+  (2024-06-22) did was set `insecureHTTPParser` unconditionally, add a
+  `Content-Type` header, and move error messages from
+  `error.response.data.message` to `error.message`.
+- `npm install pesepay@1.0.4`, not `@v1` — the `v1` dist-tag does not exist
+  until stage 8 publishes it.
+
+### Not shipped in the tarball
+
+`MIGRATION.md` and `CHANGELOG.md` stay out of `files`, so the tarball is still
+`dist/`, `src/`, `package.json`, `README`, `LICENSE` and nothing else — now
+**53 files / 88.6 KB packed**, the growth being the 25.4 KB README. npmjs.com
+rewrites relative links against the repository, so the README's links to both
+documents resolve on the registry page.
 
 ## Open items needing input
 

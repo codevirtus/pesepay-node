@@ -44,5 +44,8 @@
     "noEmit": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["src", "test", "scripts"]
+  "include": ["src", "test", "scripts"],
+  /* Written by test/docs/snippets.test.mts and checked by its own tsc run,
+     which resolves `pesepay` through the package exports map. */
+  "exclude": ["test/docs/generated"]
 }

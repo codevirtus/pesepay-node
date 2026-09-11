@@ -29,3 +29,6 @@ npm-debug.log*
 !.vscode/settings.json
 .DS_Store
 Thumbs.db
+
+# Markdown snippets, extracted for typechecking
+/test/docs/generated/
