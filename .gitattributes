@@ -1,0 +1,9 @@
+# Normalise line endings: LF in the repository and in the working tree.
+# Development happens on Windows, CI runs on Linux — without this, line
+# endings show up as spurious diffs and break formatter checks.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
