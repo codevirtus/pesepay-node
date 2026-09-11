@@ -12,7 +12,7 @@ for where things stand — update it at the end of every stage.
 |---|-------|--------|
 | 1 | Repo + history | ✅ done |
 | 2 | Toolchain (package.json, tsconfig, biome) | ✅ done |
-| 3 | Crypto + transport | ⬜ not started |
+| 3 | Crypto + transport | ✅ done |
 | 4 | Payments client | ⬜ not started |
 | 5 | Catalogue, invoices, webhook | ⬜ not started |
 | 6 | Entry points + v1 compat layer | ⬜ not started |
@@ -97,6 +97,95 @@ Three smaller gotchas worth remembering:
   users are likely to be on.
 - `.gitignore` must anchor build output as `/dist/`, not `dist/` — the unanchored
   form matches at any depth and silently swallowed `test/dist/`.
+
+## Stage 3 — done
+
+The foundation layer: `errors.ts`, `status.ts`, `types.ts`, `crypto.ts`,
+`internal/transport.ts` (1,223 lines), plus 77 new tests. `npm run verify` is
+green end to end — lint, typecheck, build, **86 tests**, `publint --strict`,
+`attw` clean in every resolution mode.
+
+Nothing is wired into `src/index.ts` yet; the modules emit to `dist/` and the
+tests reach them by path. Entry points are stage 6, as planned.
+
+### What the wire contract turned out to be
+
+Everything below was read off the Java server, not inferred:
+
+- **AES** — `AES/CBC/PKCS5PADDING`, key used directly as 32 UTF-8 bytes, **IV =
+  `key.substring(0, 16)`**, standard base64.
+  (`pesepay-payments-engine/encryption/.../PaymentPayloadEncryptionHelper.java`)
+- **17 statuses** with codes and descriptions, from
+  `pesepay-cloud-utilities/.../TransactionStatus.java`. Confirmed: `CLOSED` and
+  `CLOSED_PERIOD_ELAPSED` are both `307`, and they are the *only* duplicate.
+- **`CreateTransactionCommand` silently substitutes the string `"NONE"`** for a
+  blank `resultUrl`/`returnUrl` rather than rejecting it — so a typo'd result
+  URL yields a transaction whose outcome you are never told.
+- **`PaymentTransactionResult` has no `redirectUrl`.** The server declares one
+  but has it commented out. The redirect URL exists only on the initiate
+  response.
+- Amounts come back as a fee split (`customerPayableAmount`, `merchantAmount`,
+  `totalTransactionAmount`), not as an echo of what was sent. Reconcile against
+  `merchantAmount`.
+
+### AES vectors: generated from Java, and they bite
+
+`scripts/java/GenerateVectors.java` mirrors the server's cipher path and writes
+`test/fixtures/java-vectors.json` — 10 vectors plus a tampered case. Runs on any
+JDK 17+ with `java scripts/java/GenerateVectors.java <out>`; no Maven, and the
+source is pure ASCII (non-ASCII test data is written as `\uXXXX` escapes), so
+the output is byte-identical regardless of the platform's `file.encoding`.
+**Never regenerate these from the Node implementation** — that turns an interop
+test into a tautology.
+
+Coverage includes the empty string, 15/16/32-byte inputs, a 2 KiB payload, two
+different keys, and non-ASCII *plaintext* (which is fine — only the *key* must
+be ASCII).
+
+Because "all green" proves little on its own, five mutations were injected and
+each was caught by exactly the test that should catch it:
+
+| mutation | result |
+|---|---|
+| IV taken from the last 16 chars instead of the first | **21 failures** |
+| pad only when there is a remainder (the classic PKCS#7 bug) | **6 failures** |
+| always set `insecureHTTPParser` | **5 failures** (incl. the negative control) |
+| retry drops the request body | **1 failure** — the body-replay test |
+| warn on every fallback instead of once | **1 failure** — the warn-once test |
+
+### Gotchas found in stage 3
+
+- **`src/**/*.ts` must import siblings with a `.js` extension, not `.ts`.**
+  `tsconfig.json` sets `allowImportingTsExtensions` (needed for `noEmit`
+  typechecking), but `tsconfig.build.json` turns it off, so a `.ts` specifier
+  compiles under `typecheck` and fails under `build` with TS5097. Tests under
+  `test/` still use `.ts`/`.mts` specifiers — they are never emitted.
+- **`net.Server` has no `closeAllConnections()`** (that is `http.Server`). The
+  timeout test deliberately leaves a socket open, so the raw fixture tracks its
+  sockets and destroys them itself, or `server.close()` never resolves.
+- **Plain HTTP is allowed to loopback only.** The transport refuses to send an
+  integration key over cleartext to anything else. This is what lets the parser
+  fallback be tested against a raw `node:net` server while keeping the
+  production path https-only.
+
+### Decisions taken in stage 3
+
+- **`isTerminal()` treats an unknown status as terminal.** A status Pesepay adds
+  later is far more likely to be a new terminal outcome than a new in-flight
+  one, and guessing "pending" turns a poll loop into an infinite one. `isPaid()`
+  is separately `=== 'SUCCESS'`, so stopping early can never credit anything.
+- **`createHttpsTransport()` is a factory; `httpsTransport` is the singleton.**
+  Warn-once state lives on the closure, which makes it testable per instance
+  while the shipped behaviour stays one warning per process.
+- **Errors carry no `cause` from OpenSSL.** An OpenSSL error object can hold key
+  material in its detail fields, and errors end up in log aggregators. Tests
+  assert no key reaches a message, a stack, or `JSON.stringify` output.
+- **`insecureHTTPParser` can be switched off** via
+  `createHttpsTransport({ allowInsecureHttpParserFallback: false })`, for sites
+  whose policy forbids the lenient parser outright.
+
+Tarball is now **48 files / 37.1 KB packed**, still nothing outside `dist/`,
+`src/`, `package.json`, `README`, `LICENSE`. No test files, no `scripts/`.
 
 ## Open items needing input
 
