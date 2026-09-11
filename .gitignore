@@ -2,12 +2,12 @@
 node_modules/
 
 # Build output
-dist/
+/dist/
 *.tsbuildinfo
 
 # Test & coverage artifacts
-coverage/
-.nyc_output/
+/coverage/
+/.nyc_output/
 
 # Packaging artifacts
 *.tgz
