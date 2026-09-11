@@ -1,32 +1,48 @@
 {
+  "$schema": "https://json.schemastore.org/tsconfig",
   "compilerOptions": {
-    /* Language and Environment */
-    "target": "es5",                                     /* Set the JavaScript language version for emitted JavaScript and include compatible library declarations. */
-    /* Modules */
-    "module": "commonjs",                                /* Specify what module code is generated. */
-    /* Emit */
-    "declaration": true,                              /* Generate .d.ts files from TypeScript and JavaScript files in your project. */
-    "declarationMap": true,                           /* Create sourcemaps for d.ts files. */
-    // "emitDeclarationOnly": true,                      /* Only output d.ts files and not JavaScript files. */
-    "sourceMap": true,                                /* Create source map files for emitted JavaScript files. */
-    // "outFile": "./",                                  /* Specify a file that bundles all outputs into one JavaScript file. If `declaration` is true, also designates a file that bundles all .d.ts output. */
-    "outDir": "dist",                                   /* Specify an output folder for all emitted files. */
-    "esModuleInterop": true,                             /* Emit additional JavaScript to ease support for importing CommonJS modules. This enables `allowSyntheticDefaultImports` for type compatibility. */
-    // "preserveSymlinks": true,                         /* Disable resolving symlinks to their realpath. This correlates to the same flag in node. */
-    "forceConsistentCasingInFileNames": true,            /* Ensure that casing is correct in imports. */
-    /* Type Checking */
-    "strict": true,                                      /* Enable all strict type-checking options. */
-    "skipLibCheck": true,                                 /* Skip type checking all .d.ts files. */
-    "baseUrl": ".",
-    "paths": { "*": ["types/*"] },
-    "noImplicitAny": true,
-    "removeComments": true,
-    "preserveConstEnums": true,
-  }, 
-  "include": [
-    "src/*"
-  ],
-  "exclude": [
-    "node_modules",
-  ]
+    /* Language and environment */
+    "target": "es2023",
+    "lib": ["es2023"],
+    /* TypeScript 7 changed the default for `types` from ["*"] to []. Without
+       this, node:https and node:crypto are untyped. */
+    "types": ["node"],
+
+    /* Modules. `module: nodenext` + `moduleResolution: nodenext` is the only
+       legal pairing in TS 7 for a Node library: moduleResolution `node10` was
+       removed (TS5108) and `commonjs` + `nodenext` is rejected (TS5110).
+       Emit format is chosen per file from its extension plus the package
+       `"type": "commonjs"`, so .ts emits CJS and .mts emits ESM. */
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "resolveJsonModule": true,
+
+    /* Type checking: strict, plus the checks `strict` does not enable */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "useUnknownInCatchVariables": true,
+
+    /* Emit discipline. `isolatedDeclarations` forces explicit return types on
+       exports, so the published .d.ts is deterministic rather than subject to
+       inference drift between compiler versions. `erasableSyntaxOnly` forbids
+       enum/namespace/parameter properties, which is what lets the tests run
+       .ts directly under Node's built-in type stripping with no dependencies. */
+    "isolatedDeclarations": true,
+    "erasableSyntaxOnly": true,
+    "declaration": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
+    /* This config type-checks everything and emits nothing; tests import
+       ../src/*.ts directly, which requires noEmit. */
+    "noEmit": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src", "test", "scripts"]
 }

@@ -11,7 +11,7 @@ for where things stand — update it at the end of every stage.
 | # | Stage | Status |
 |---|-------|--------|
 | 1 | Repo + history | ✅ done |
-| 2 | Toolchain (package.json, tsconfig, biome) | ⬜ not started |
+| 2 | Toolchain (package.json, tsconfig, biome) | ✅ done |
 | 3 | Crypto + transport | ⬜ not started |
 | 4 | Payments client | ⬜ not started |
 | 5 | Catalogue, invoices, webhook | ⬜ not started |
@@ -55,6 +55,48 @@ for where things stand — update it at the end of every stage.
   which is how `dist/test.js` leaked into the 1.0.4 tarball), `.gitattributes`
   (`eol=lf`), `.editorconfig`, `.nvmrc`, and a real `LICENSE` — v1 claimed MIT in
   `package.json` but shipped no licence file.
+
+## Stage 2 — done
+
+Toolchain in place and fully green: `npm run verify` runs lint → typecheck →
+build → 9 tests → `publint --strict` + `attw`, all passing.
+
+- `typescript@7.0.2`, `@biomejs/biome@2.5.13`, `@types/node@26.5.1`,
+  `publint@0.3.24`, `@arethetypeswrong/cli@0.18.5`. **Zero runtime deps.**
+- A single `tsc` run emits CJS + ESM + both declaration flavours for both entry
+  points (`.` and `./v1-compat`). `attw` is green in **every** resolution mode,
+  including legacy `node10`.
+- Tarball is **23 files / 11.1 KB**, with no test files and nothing outside
+  `dist/`, `src/`, `package.json`, `README`, `LICENSE`. For comparison, v1.0.4
+  shipped **42 files / 44 KB**, including a stray `dist/test.js`.
+
+### Test strategy — settled, and not obvious
+
+`"type": "commonjs"` means `src/**/*.ts` emits CommonJS, which also means **Node
+cannot load those sources directly** under type stripping: an `.mts` test doing
+`import { X } from '../../src/index.ts'` fails with "does not provide an export
+named X" — Node treats the file as CJS and finds no `exports.` assignments in
+what is still ESM syntax.
+
+So tests run against `dist/`, which is what consumers actually receive, while
+keeping full type safety via `test/fixtures/sdk.mts`:
+
+```ts
+import type * as IndexModule from '../../src/index.ts'; // erased at runtime
+export const sdk: typeof IndexModule = require_('../../dist/index.js');
+```
+
+Types come from source, values from the build. `pretest` runs `build`, so
+`npm test` is always honest. Add a similar typed loader per module in stage 3+.
+
+Three smaller gotchas worth remembering:
+- `node --test test/unit/` does **not** work on Windows — it resolves the
+  directory as a module. Use a glob: `node --test "test/**/*.test.mts"`.
+- `typesVersions` is required for `pesepay/v1-compat` to resolve types under
+  TypeScript's legacy `node10` resolution, which is exactly what migrating v1
+  users are likely to be on.
+- `.gitignore` must anchor build output as `/dist/`, not `dist/` — the unanchored
+  form matches at any depth and silently swallowed `test/dist/`.
 
 ## Open items needing input
 
