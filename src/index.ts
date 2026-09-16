@@ -93,4 +93,4 @@ export type {
 } from './types.js';
 
 /** The SDK version, as published to npm. */
-export const VERSION: string = '2.0.0';
+export const VERSION: string = '2.0.0-rc.1';

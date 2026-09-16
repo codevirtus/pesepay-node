@@ -1,6 +1,6 @@
 {
   "name": "pesepay",
-  "version": "2.0.0",
+  "version": "2.0.0-rc.1",
   "description": "Official Node.js SDK for the Pesepay payment gateway. Zero dependencies, TypeScript-first, server-side only.",
   "keywords": [
     "pesepay",
