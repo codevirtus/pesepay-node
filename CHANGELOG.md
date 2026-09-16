@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0-rc.1] - 2026-09-16
+
+Release candidate for 2.0.0. The API is unchanged from the 2.0.0 entry below;
+this release exists to exercise the package as consumers receive it, and the
+release pipeline itself, before `latest` moves.
+
+```shell
+npm install pesepay@next
+```
+
+`npm install pesepay` continues to resolve to 1.0.4, and `pesepay@v1` stays the
+documented escape hatch for 1.x.
+
+### Not yet verified
+
+- **No call in this package has reached `api.pesepay.com`.** The test suite runs
+  against a local reproduction of the gateway's responses, and the AES vectors
+  prove Node's cipher agrees with the Java server's — neither proves the server
+  accepts what we send it. `scripts/live-check.mjs` covers that round trip
+  against the live gateway.
+- The `insecureHTTPParser` retry in the transport is derived from the gateway's
+  observed bare-LF header block. If Pesepay has since fixed those headers, the
+  strict parser will simply succeed and the retry will never fire.
+
+Problems are worth reporting at
+<https://github.com/codevirtus/pesepay-node/issues>.
+
 ## [2.0.0] - 2026-09-11
 
 A complete rewrite. The package is now a zero-dependency, TypeScript-first SDK
