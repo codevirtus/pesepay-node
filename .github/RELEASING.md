@@ -1,23 +1,9 @@
 # Releasing
 
-Publishing is a tag push. Everything else is automated, except two one-time
-steps that need an npm account with maintainer rights on `pesepay`.
+Publishing is a tag push. Everything else is automated, except a one-time setup
+that needs an npm account with maintainer rights on `pesepay`.
 
-## One-time setup
-
-### 1. The `v1` dist-tag
-
-Run this before the first stable 2.x release:
-
-```shell
-npm dist-tag add pesepay@1.0.4 v1
-npm dist-tag ls pesepay          # expect: latest: 1.0.4, v1: 1.0.4
-```
-
-Once `latest` moves to 2.x, the tag lets 1.x users install 1.0.4 by name.
-`release.yml` refuses to publish to `latest` until `dist-tags.v1` is `1.0.4`.
-
-### 2. Trusted Publishing and the `npm-publish` environment
+## One-time setup: Trusted Publishing and the `npm-publish` environment
 
 The release workflow authenticates with a short-lived OIDC token. Do not add an
 `NPM_TOKEN` to this repository.
@@ -60,8 +46,8 @@ flag.
    ```
 
 The tag push runs `release.yml`. It checks that the tag matches `package.json`,
-checks the `v1` dist-tag, runs `npm run verify` and the package check, waits for
-approval, publishes to npm, and creates the GitHub release.
+runs `npm run verify` and the package check, waits for approval, publishes to
+npm, and creates the GitHub release.
 
 A version with a hyphen, such as `2.0.0-rc.1`, publishes under the `next`
 dist-tag as a prerelease and leaves `latest` unchanged.
@@ -69,6 +55,7 @@ dist-tag as a prerelease and leaves `latest` unchanged.
 ## After publishing
 
 ```shell
-npm view pesepay dist-tags        # latest: 2.0.0, v1: 1.0.4
+npm view pesepay dist-tags        # latest: 2.0.0
+npm view pesepay@1 version        # 1.0.4, still installable
 npm audit signatures              # provenance verifies
 ```

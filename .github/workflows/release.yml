@@ -44,17 +44,6 @@ jobs:
             echo "dist_tag=$dist_tag"
           } >> "$GITHUB_OUTPUT"
 
-      # Once `latest` moves to 2.x, the v1 dist-tag is how 1.x users find 1.0.4
-      # by name. The tag has to exist before it is needed, not after.
-      - name: 1.0.4 must already be reachable as @v1
-        if: steps.version.outputs.dist_tag == 'latest'
-        run: |
-          current="$(npm view pesepay dist-tags.v1 2>/dev/null || true)"
-          if [ "$current" != "1.0.4" ]; then
-            echo "::error::the v1 dist-tag is '${current:-unset}', expected 1.0.4 — run: npm dist-tag add pesepay@1.0.4 v1"
-            exit 1
-          fi
-
       - run: npm run verify
       - run: node scripts/check-package.mts
 
