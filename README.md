@@ -4,29 +4,41 @@
 [![npm](https://img.shields.io/npm/v/pesepay?logo=npm&logoColor=white&color=cb3837)](https://www.npmjs.com/package/pesepay)
 [![node](https://img.shields.io/badge/node-%E2%89%A5%2022.12-5fa04e?logo=nodedotjs&logoColor=white)](https://nodejs.org/en/about/previous-releases)
 [![dependencies](https://img.shields.io/badge/dependencies-0-4c1)](https://github.com/codevirtus/pesepay-node/blob/main/package.json)
-[![licence](https://img.shields.io/npm/l/pesepay?color=blue)](LICENSE)
+[![licence](https://img.shields.io/npm/l/pesepay?color=blue)](https://github.com/codevirtus/pesepay-node/blob/main/LICENSE)
 
 Official Node.js SDK for the [Pesepay](https://pesepay.com) payment gateway.
 
-- **Zero runtime dependencies.** Nothing but `node:` builtins.
-- **TypeScript-first**, with CommonJS and ESM from one compiled module — so
-  `require('pesepay')` and `import 'pesepay'` give you the *same* classes, and
-  `instanceof` keeps working across the boundary.
-- **All 17 transaction statuses**, not a `paid` boolean. `PENDING`, `DECLINED`
-  and `REVERSED` are three different things to do next.
-- **Typed errors** that tell you which credential is wrong.
+- **Zero runtime dependencies.**
+- **TypeScript types included.** Works with both `import` and `require`.
+- **All 17 transaction statuses**, not just a `paid` flag.
+- **Typed errors** that tell you what went wrong and whether to retry.
 
 Requires Node.js **22.12 or newer**.
 
 > [!WARNING]
-> **Server-side only.** This package holds your integration key and your
-> encryption key. There is no browser build and there should not be one: a key
-> that reaches a browser is a key that has been published. Keep both in
-> environment variables, never in source control, and never ship them to a
-> client.
+> **Server-side only.** This package uses your integration key and encryption
+> key. Keep both in environment variables. Never commit them or send them to a
+> browser.
 
-Upgrading from 1.x? See **[MIGRATION.md](MIGRATION.md)** — the zero-effort step
-is one line.
+You get both keys from your Pesepay merchant account. See the
+[Pesepay developer documentation](https://developers.pesepay.com/).
+
+Upgrading from 1.x? See the
+[migration guide](https://github.com/codevirtus/pesepay-node/blob/main/MIGRATION.md).
+
+## Contents
+
+- [Install](#install)
+- [Quickstart](#quickstart)
+- [Redirect payments](#redirect-payments)
+- [Seamless payments](#seamless-payments)
+- [Checking a payment](#checking-a-payment)
+- [Payment notifications (webhook)](#payment-notifications-webhook)
+- [Invoices](#invoices)
+- [Currencies and payment methods](#currencies-and-payment-methods)
+- [Errors](#errors)
+- [Configuration](#configuration)
+- [API](#api)
 
 ## Install
 
@@ -36,7 +48,7 @@ npm install pesepay
 
 ## Quickstart
 
-Two calls: create the transaction, send the customer to `redirectUrl`.
+Create a transaction, then send the customer to `redirectUrl`.
 
 ```ts
 import { Pesepay } from 'pesepay';
@@ -60,20 +72,20 @@ const { referenceNumber, pollUrl, redirectUrl } = await pesepay.initiateTransact
 });
 ```
 
-CommonJS works the same way:
+With CommonJS:
 
 ```js
 const { Pesepay } = require('pesepay');
 ```
 
-`resultUrl` and `returnUrl` are both required by the gateway, and neither is
-validated by it: a blank or missing one is silently replaced server-side with
-the literal string `"NONE"`, which produces a transaction whose outcome you are
-never told about. This package rejects them up front instead.
+- `resultUrl` is where Pesepay sends [payment notifications](#payment-notifications-webhook).
+- `returnUrl` is where the customer lands after paying.
+
+Both are required and must be valid URLs.
 
 ## Redirect payments
 
-The hosted flow. Pesepay presents the payment page; you get a `redirectUrl`.
+Pesepay hosts the payment page. You redirect the customer to it.
 
 ```ts
 const transaction = await pesepay.initiateTransaction({
@@ -91,23 +103,18 @@ await saveOrder({
 });
 ```
 
-> [!IMPORTANT]
-> **`redirectUrl` exists only here.** The gateway declares one on transaction
-> results but has it commented out, so no later poll, check or webhook hands it
-> back. Store it with the reference number if you need to re-send a customer to
-> the payment page.
-
-`merchantReference` is echoed back on every result for that transaction, and
-`paymentMetadata` comes back as `transactionMetadata` — both are how you find
-your own order again without a lookup table.
-
-Pass `paymentMethodCode` to skip Pesepay's method picker and land the customer
-straight on, say, EcoCash.
+- **Save `redirectUrl`** if you might need to send the customer back to the
+  payment page. Only `initiateTransaction` returns it.
+- **`merchantReference`** is your own order ID. It comes back on every result
+  for the transaction.
+- **`paymentMetadata`** comes back as `transactionMetadata` on every result.
+- **`paymentMethodCode`** (optional) skips Pesepay's method picker and sends the
+  customer straight to that method, for example EcoCash.
 
 ## Seamless payments
 
-The customer never leaves your site: you collect the details and the gateway
-charges directly. There is no redirect and no hosted page.
+The customer stays on your site. You collect the payment details, and Pesepay
+charges the payment method directly.
 
 ```ts
 const result = await pesepay.makeSeamlessPayment({
@@ -122,25 +129,21 @@ const result = await pesepay.makeSeamlessPayment({
 log.info(result.transactionStatus, result.paid, result.isTerminal);
 ```
 
-Three things to get right:
+- **`customer` is required**, with at least one of `email` or `phoneNumber`.
+- **`requiredFields` keys are field `name`s** from the payment method's
+  `requiredFields` list (see
+  [Currencies and payment methods](#currencies-and-payment-methods)), not the
+  `displayName`s.
+- **The first result is usually `PENDING`.** Mobile money waits for the customer
+  to approve on their phone. [Check the payment](#checking-a-payment) until it
+  finishes.
+- **Some methods can't be charged this way.** If a method's `redirectRequired`
+  is `true`, use a [redirect payment](#redirect-payments) instead.
 
-- **`customer` is mandatory.** At least one of `email` or `phoneNumber` must be
-  set. The gateway dereferences the customer without a null check, so omitting
-  it answers `500` with a `NullPointerException` rather than a useful message —
-  this package refuses the call before it leaves your process.
-- **`requiredFields` is keyed by each field's wire `name`**, which you read from
-  the payment method's `requiredFields` — not by its `displayName`.
-- **The result is usually not terminal.** A mobile-money charge comes back
-  `PENDING` while the customer's handset is still showing the prompt. Keep
-  polling.
+## Checking a payment
 
-Not every method can be charged this way: a method whose `redirectRequired` is
-`true` must go through the hosted flow.
-
-## Polling
-
-`checkPayment(referenceNumber)` and `pollTransaction(pollUrl)` both return the
-same `PaymentResult`. Use whichever handle you kept.
+`checkPayment(referenceNumber)` and `pollTransaction(pollUrl)` return the same
+`PaymentResult`. Use whichever one you saved.
 
 ```ts
 import { isPaid, TransactionStatus } from 'pesepay';
@@ -162,29 +165,27 @@ if (result.paid) {
   log.warn('still pending after 20 attempts', result.referenceNumber);
 }
 
-// The same two questions, answered from a raw status string — a queue message,
-// say, or a row read back out of your database.
+// The same checks work on a status string you stored earlier.
 log.info(isPaid(TransactionStatus.SUCCESS));
 ```
 
-Every result carries `paid` and `isTerminal` as plain data, so a result survives
-`JSON.stringify`, `structuredClone` and a trip through a queue with both answers
-intact.
+Every result has two flags:
 
-- **`paid` is `true` only for `SUCCESS`.** Not for `PARTIALLY_PAID` (money
-  arrived, but not the amount you asked for) and not for `REVERSED` (you were
-  paid, and then you were not).
-- **`isTerminal` is `false` for exactly four statuses** — `INITIATED`,
-  `PROCESSING`, `PENDING`, `PARTIALLY_PAID`. A status Pesepay adds in future is
-  treated as terminal, so a poll loop stops rather than spinning forever.
+- **`paid`** is `true` only for `SUCCESS`. It is `false` for `PARTIALLY_PAID`
+  and for `REVERSED`.
+- **`isTerminal`** is `true` once the status will not change again. Stop polling
+  when it is `true`.
 
-Reconcile against `amountDetails.merchantAmount`, which is what settles to you.
-The gateway computes a fee split rather than echoing what you sent, so
-`amountDetails.amount` and `customerPayableAmount` are different numbers.
+Both are plain properties, so they survive `JSON.stringify` and a round trip
+through your database or queue.
 
-### The statuses
+**Reconcile with `amountDetails.merchantAmount`.** That is the amount you
+receive after fees. It differs from `amountDetails.amount` and
+`customerPayableAmount`.
 
-| status | code | terminal | paid |
+### Transaction statuses
+
+| status | code | final | paid |
 |---|---|---|---|
 | `INITIATED` | 301 | | |
 | `PROCESSING` | 302 | | |
@@ -204,82 +205,72 @@ The gateway computes a fee split rather than echoing what you sent, so
 | `REVERSED` | 314 | ✅ | |
 | `CLOSED_PERIOD_ELAPSED` | 307 | ✅ | |
 
-`CLOSED` and `CLOSED_PERIOD_ELAPSED` share code `307`, so **a status code cannot
-be mapped back to a status.** Branch on `transactionStatus`; treat
-`transactionStatusCode` as something to log.
+Branch on `transactionStatus`, not `transactionStatusCode`: `CLOSED` and
+`CLOSED_PERIOD_ELAPSED` share code `307`.
 
-`TRANSACTION_STATUS_CODES` and `TRANSACTION_STATUS_DESCRIPTIONS` hold the
-gateway's own numbers and wording if you need to display them.
+An unrecognised status is treated as final, so a polling loop always stops.
 
-## The result-url webhook
+`TRANSACTION_STATUS_CODES` and `TRANSACTION_STATUS_DESCRIPTIONS` hold Pesepay's
+codes and descriptions for display.
 
-Pesepay POSTs the transaction result to your `resultUrl` whenever the status
-reaches a terminal value. `parseCallback` decodes that body and tells you
-whether the request carried your integration key.
+## Payment notifications (webhook)
+
+When a transaction reaches a final status, Pesepay sends a `POST` request to
+your `resultUrl`. `parseCallback` reads the request body and checks that the
+request carries your integration key.
 
 ```ts
 app.post('/pesepay/webhook', express.json(), async (req, res) => {
-  // 1. Answer immediately. There are no retries — a slow or failing
-  //    response loses the notification permanently.
+  // 1. Respond right away, before doing any work.
   res.sendStatus(200);
 
   const { result, keyVerified } = pesepay.parseCallback(req.body, req.headers);
   if (!keyVerified) log.warn('unverified pesepay callback', result.referenceNumber);
 
-  // 2. Re-verify over the authenticated, encrypted API before acting.
+  // 2. Confirm the outcome with Pesepay before acting on it.
   const confirmed = await pesepay.checkPayment(result.referenceNumber);
 
-  // 3. Be idempotent on referenceNumber + transactionStatus.
+  // 3. Handle each (referenceNumber, transactionStatus) pair only once.
   await creditOnce(confirmed.referenceNumber, confirmed.transactionStatus, confirmed);
 });
 ```
 
-Each step is forced by something the gateway does. This is not defensive
-boilerplate; drop any one of the three and you have a specific, reproducible
-bug.
+Follow all three steps:
 
-**The callback is not authenticated.** There is no HMAC and no signature — not a
-weak one, none. The only credential is an `Authorization` header holding your
-integration key verbatim. So:
+1. **Respond with `200` first**, then do the work, so a slow or failing handler
+   doesn't lose the notification. Don't rely on notifications alone: also poll
+   `checkPayment` for any order that stays pending.
+2. **Confirm with `checkPayment`.** Treat the notification as a signal to
+   check, not as proof of payment. `checkPayment` returns the authoritative
+   status.
+3. **Make the handler idempotent on `referenceNumber` and
+   `transactionStatus`.** One transaction can notify more than once. For
+   example, you might get `SUCCESS` and later `REVERSED`.
 
-| step | the property that forces it |
+### Key verification
+
+`keyVerified` is `true` when the request's `Authorization` header matches your
+integration key exactly. `keyStatus` says why a check failed:
+
+| `keyStatus` | meaning |
 |---|---|
-| **Respond first**, before any work | The gateway posts **once**. It catches every exception, logs it, and moves on — no retries, no backoff, no dead-letter. A 500 from your handler, a timeout, a deploy mid-post, and the notification is gone for good. |
-| **Re-verify** through `checkPayment` | The header is **absent entirely** when the gateway's own key lookup fails, and it posts the body anyway. So an unverified callback is a body anyone could have sent. And `keyVerified: true` proves only that the sender knew a key you also put in an outbound header on every API call — evidence, not proof, and it says nothing about the *contents* being untampered. `checkPayment` is encrypted, authenticated by your key, and answered by the gateway; it is the only channel here that establishes what happened. |
-| **Be idempotent on `referenceNumber` + `transactionStatus`** | A reversal arrives as a **second callback**. The gateway posts on every terminal status change, so one transaction delivers `SUCCESS` and then, later, `REVERSED`. A handler keyed on the reference alone either ignores the reversal or double-credits the success. |
+| `'matched'` | The header matches your integration key. |
+| `'absent'` | The request has no `Authorization` header. |
+| `'mismatched'` | The header holds a different value, such as an old key after you rotated it, or a request that did not come from Pesepay. |
 
-### `keyStatus`, and why it is not just a boolean
+`parseCallback` does not throw on a missing header. It reports `'absent'`.
 
-`parseCallback` returns `keyStatus` alongside `keyVerified`, separating the two
-ways verification fails — they are different incidents and deserve different
-alerts.
+### Accepted input
 
-| `keyStatus` | meaning | what to do |
-|---|---|---|
-| `'matched'` | the header held your integration key | proceed to step 2 |
-| `'absent'` | no `Authorization` header at all | **your own account is misconfigured** — the gateway could not find an integration key for the application and posted anyway |
-| `'mismatched'` | a header was present and held something else | a key you rotated and did not finish rolling out, or a request that did not come from Pesepay |
-
-A missing header never throws: the gateway genuinely sends none, and a webhook
-endpoint that crashes on that is worse than one that records the fact.
-
-The comparison is constant-time, and verbatim — no `Bearer` prefix is stripped
-and nothing is trimmed, because the gateway sets the header to the raw key and
-leniency would only widen what counts as a match.
-
-### What it accepts
-
-The body as a parsed object (`express.json()`), a JSON string, or the raw
-`Buffer`. Unlike every other response from this gateway the callback is **plain,
-unencrypted JSON** — not the `{ payload }` envelope — so nothing is decrypted,
-and a body that *is* an envelope is rejected with that explanation rather than
-quietly mis-parsed. `headers` is optional and matched case-insensitively; Node's
-`req.headers` fits as-is.
+- **`body`**: the parsed JSON object (for example from `express.json()`), a JSON
+  string, or the raw `Buffer`.
+- **`headers`** (optional): header names are matched case-insensitively, so you
+  can pass Node's `req.headers` as-is.
 
 ## Invoices
 
-Pesepay emails the payer a payment link and collects on your behalf. There is no
-checkout to present and no `redirectUrl` to send anyone to.
+Pesepay emails the payer a payment link. There is no checkout page and no
+`redirectUrl`.
 
 ```ts
 const invoice = await pesepay.initiateInvoice({
@@ -297,35 +288,21 @@ const payment = await pesepay.checkInvoice(invoice.invoiceNumber);
 log.info(invoice.invoiceNumber, invoice.pollUrl, payment.paid);
 ```
 
-Four things are unlike every other endpoint here:
+- **`applicationCode` is required.** Invoices identify your application by this
+  code, not by your integration key.
+- **Dates** can be a `Date`, `'YYYY-MM-DD'` or `'MM/DD/YYYY'`. A `Date` is read in
+  UTC.
+- **`initiatorReference` must be unique** across your invoices. Pesepay rejects a
+  repeated one, so you can use it to avoid creating duplicates.
+- **`invoiceNumber` is also the transaction's reference number.**
+  `checkInvoice` returns a `PaymentResult`, with the same `paid` and `isTerminal`
+  flags as any other payment. You can also pass the invoice's `pollUrl` to
+  `pollTransaction`.
+- **Recurring invoices** need `recurring: true` and a `recurringFrequency`.
 
-1. **`applicationCode` is required.** The gateway resolves the owning
-   application from that field and never from your integration key — every other
-   call in this SDK identifies you by the key header, this one does not. Omit it
-   and the gateway answers `500`; this package refuses first.
-2. **Dates are `MM/DD/YYYY` on the wire**, parsed by a hand-written formatter
-   rather than by Jackson, so ISO-8601 does not work there. A `Date`, an ISO
-   `'YYYY-MM-DD'` string, or the gateway's own `'MM/DD/YYYY'` are all accepted
-   here and converted. A `Date` is read in **UTC** — `new Date('2026-09-15')` is
-   UTC midnight, and reading local components would make the due date a day
-   early for everyone west of Greenwich.
-3. **`initiatorReference` must be unique** across your invoices; the gateway
-   rejects a repeat. That makes it a usable idempotency key.
-4. **`invoiceNumber` is the reference number.** It is a zero-padded row id such
-   as `0001042`, and it is the reference of the transaction created when the
-   payer pays — which is why `checkInvoice` answers with a `PaymentResult`, with
-   `paid` and `isTerminal` meaning what they always mean.
+## Currencies and payment methods
 
-`recurring: true` needs a `recurringFrequency`; without one the gateway asserts
-rather than validates, and answers `500`. The invoice's `pollUrl` carries
-`?invoiceNumber=`, not `?referenceNumber=` — it is still a valid argument to
-`pollTransaction`.
-
-## The catalogue
-
-What your account can transact in, and what it can be charged with. Both are
-plain, unencrypted, and public — this package deliberately sends **no
-credential** to them, because they do not ask for one.
+These endpoints are public. No keys are sent.
 
 ```ts
 const currencies = await pesepay.getActiveCurrencies();
@@ -342,29 +319,26 @@ const everything = await pesepay.getActivePaymentMethods();
 log.info(currencies.map((currency) => currency.code), everything.length);
 ```
 
-Call `getActiveCurrencies` before a checkout rather than hard-coding a code: a
-currency your account is not configured for is rejected at initiate time,
-several steps further into a checkout than here.
-
-`getPaymentMethods(currencyCode)` is the one to prefer. `getActivePaymentMethods()`
-returns every active method across all currencies, and each still has to be
-filtered against its own `currencies` array before it can be offered.
-
-Check `minimumAmount` and `maximumAmount` client-side, and read `requiredFields`
-to build the form a seamless charge needs.
+- **Use `getActiveCurrencies`** instead of hard-coding currency codes. Pesepay
+  rejects a currency your account isn't set up for.
+- **Prefer `getPaymentMethods(currencyCode)`.** `getActivePaymentMethods()`
+  returns methods for all currencies, so you'd need to filter each one by its
+  `currencies` list.
+- **Check `minimumAmount` and `maximumAmount`** before you submit a payment.
+- **Use `requiredFields`** to build the form for a seamless payment.
 
 ## Errors
 
-Every failure is a throw, and every error extends `PesepayError`.
+Every method throws on failure. Every error extends `PesepayError`.
 
 ```
 PesepayError
-├── PesepayApiError        the gateway answered, and it was not a 2xx
-│   └── PesepayAuthError   403 or 404 — your integration key
-├── PesepayCryptoError     encrypt/decrypt failed. Fatal by design
+├── PesepayApiError        Pesepay responded with a non-2xx status
+│   └── PesepayAuthError   403 or 404: a problem with your integration key
+├── PesepayCryptoError     encryption or decryption failed
 ├── PesepayNetworkError    no response at all
 │   └── PesepayTimeoutError
-└── PesepayConfigError     bad configuration or bad arguments. Thrown before any socket
+└── PesepayConfigError     invalid configuration or arguments (thrown before any request)
 ```
 
 ```ts
@@ -380,69 +354,51 @@ try {
   });
 } catch (error) {
   if (error instanceof PesepayTimeoutError) {
-    // Not a failed payment. See below.
+    // The payment may still have gone through. See "Timeouts" below.
     log.warn('timed out after', error.timeoutMs);
   } else if (error instanceof PesepayAuthError) {
-    // 404 = the key is unknown, 403 = the key is disabled. Never retried.
+    // 404: the key is unknown. 403: the key is disabled.
     log.error('integration key rejected', error.status);
   } else if (error instanceof PesepayApiError && error.isEncryptionKeyMismatch()) {
     log.error('the encryption key does not match this integration key');
   } else if (error instanceof PesepayApiError && error.isRetryable()) {
-    log.warn('transient', error.status, error.serverMessage);
+    log.warn('temporary failure', error.status, error.serverMessage);
   } else if (error instanceof PesepayConfigError) {
-    log.error('called wrongly', error.message);
+    log.error('invalid call', error.message);
   } else {
     throw error;
   }
 }
 ```
 
-Every error also carries a stable `code` — `'ERR_PESEPAY_AUTH'` and so on — for
-structured logs, worker boundaries, and anywhere `instanceof` cannot reach.
+Every error also has a stable `code` string, such as `'ERR_PESEPAY_AUTH'`, for
+logging and for places where `instanceof` doesn't work.
 
-**No error here carries key material**, in its message, its properties or its
-`cause`. The gateway's own words are redacted before they become an error
-message, because errors end up in log aggregators.
+Error messages and properties never contain your keys.
 
-### The status codes read backwards
+### Troubleshooting status codes
 
-The usual rule — *4xx is your fault, 5xx is worth retrying* — is wrong against
-this gateway. These mappings are read off the server, not guessed.
-
-| status | what it actually means | class | `isRetryable()` |
+| status | meaning | error | `isRetryable()` |
 |---|---|---|---|
-| `400` | often just an unhandled server-side exception, not a validation failure | `PesepayApiError` | `false` |
-| `403` | your integration key **exists but is disabled** | `PesepayAuthError` | `false` |
-| `404` | your integration key is **unknown** — *not* "no such endpoint" | `PesepayAuthError` | `false` |
-| `408`, `429` | genuinely transient | `PesepayApiError` | `true` |
-| `500` `"Failed to decrypt your data"` | your **encryption key** is wrong — the integration key is fine | `PesepayApiError` | `false` |
-| other `5xx` | the gateway is unwell | `PesepayApiError` | `true` |
+| `403` | Your integration key is **disabled**. | `PesepayAuthError` | `false` |
+| `404` | Your integration key is **not recognised**. This does not mean the URL is wrong. | `PesepayAuthError` | `false` |
+| `500` with `"Failed to decrypt your data"` | Your **encryption key** is wrong. `isEncryptionKeyMismatch()` returns `true`. | `PesepayApiError` | `false` |
+| `408`, `429`, other `5xx` | A temporary problem. | `PesepayApiError` | `true` |
+| other `4xx` | The request was rejected. Read `error.serverMessage`. | `PesepayApiError` | `false` |
 
-The two that cost the most time:
+If you get a `404`, check that your key belongs to the environment you are
+calling. For example, a live key sent to the sandbox returns `404`.
 
-- **A `404` sends people hunting for a typo in a URL.** It means the key in your
-  `key` header is not one the gateway knows. Check the *credential*, and check
-  that it belongs to the environment you are pointed at — a live key against the
-  sandbox is a `404`.
-- **The `500` sends people rotating the wrong credential.** It is the *other*
-  key. `PesepayApiError.isEncryptionKeyMismatch()` picks it out, and this is
-  also why the status is always checked before anything is decrypted: decrypting
-  first would turn "your integration key is unknown" into a padding error.
+Use `isRetryable()` instead of hard-coding this table.
 
-Use `isRetryable()` rather than writing the table into your own code. It answers
-`true` for `408`, `429` and 5xx other than the decryption failure, and `false`
-for everything else — a `403`/`404` is a key that will still be wrong in ten
-minutes, and retrying a key mismatch is a loop.
-
-### A timeout is not a failed payment
+### Timeouts
 
 > [!CAUTION]
-> A `PesepayTimeoutError` means you did not hear back. It does **not** mean the
-> transaction did not happen. The gateway may have taken the payment and
-> answered too slowly, or answered into a dropped socket.
+> A `PesepayTimeoutError` means no response arrived in time. **The payment may
+> still have gone through.**
 
-**Recover with `checkPayment(referenceNumber)`. Never by re-initiating** — that
-risks charging the customer twice.
+Never retry the payment call after a timeout, or you may charge the customer
+twice. Call `checkPayment(referenceNumber)` to find out what happened:
 
 ```ts
 import { PesepayTimeoutError } from 'pesepay';
@@ -459,17 +415,17 @@ try {
 } catch (error) {
   if (!(error instanceof PesepayTimeoutError)) throw error;
 
-  // Ask what actually happened. Retrying the charge could take the money twice.
+  // Check the outcome. Do not retry the charge.
   const actual = await pesepay.checkPayment(referenceNumber);
   log.warn('recovered after timeout', actual.transactionStatus, actual.paid);
 }
 ```
 
-The same applies to a timed-out `initiateTransaction` — except that you have no
-reference number yet, which is why `merchantReference` is worth setting on every
-call. The transport knows this too: it retries *nothing* on a timeout or a
-refused connection, precisely because replaying a `POST` to `/initiate` risks a
-double charge.
+If `initiateTransaction` times out, you won't have a reference number yet. Set
+`merchantReference` on every call so you can match the transaction to your
+order later.
+
+The SDK never retries a request that timed out.
 
 ## Configuration
 
@@ -490,17 +446,16 @@ log.info(sandbox.baseUrl, sandbox.timeoutMs, DEFAULT_BASE_URL, DEFAULT_TIMEOUT_M
 
 | option | default | notes |
 |---|---|---|
-| `integrationKey` | — | required. Sent as the `key` header |
-| `encryptionKey` | — | required. **Exactly 32 ASCII characters**, validated eagerly — a bad key throws `PesepayConfigError` before any socket |
-| `resultUrl` | — | where the gateway POSTs results. Required by `initiateTransaction`, `makeSeamlessPayment` and `initiateInvoice` |
-| `returnUrl` | — | where the customer lands after the hosted page |
-| `timeoutMs` | `30_000` | total budget per call |
-| `baseUrl` | `https://api.pesepay.com/api/payments-engine` | point at `api.test.pesepay.com` for sandbox |
-| `transport` | `httpsTransport` | the HTTP seam — see below |
+| `integrationKey` | — | Required. |
+| `encryptionKey` | — | Required. Must be exactly 32 ASCII characters. An invalid key throws `PesepayConfigError` in the constructor. |
+| `resultUrl` | — | Where Pesepay sends payment notifications. Required for `initiateTransaction`, `makeSeamlessPayment` and `initiateInvoice`. |
+| `returnUrl` | — | Where the customer lands after paying on Pesepay's page. |
+| `timeoutMs` | `30_000` | Time limit for each call, in milliseconds. |
+| `baseUrl` | `https://api.pesepay.com/api/payments-engine` | Use `https://api.test.pesepay.com/api/payments-engine` for the sandbox. |
+| `transport` | `httpsTransport` | A custom HTTP function. See below. |
 
 `resultUrl` and `returnUrl` are also settable properties, and each call can
-override them for itself. The v1 positional form still constructs the same
-class:
+override them. The 1.x constructor form also works:
 
 ```ts
 import { Pesepay } from 'pesepay';
@@ -510,17 +465,13 @@ pesepay.resultUrl = 'https://example.com/pesepay/webhook';
 pesepay.returnUrl = 'https://example.com/checkout/done';
 ```
 
-`JSON.stringify(pesepay)` publishes neither key: both are `#private` fields,
-which are invisible to it.
+### Custom transport
 
-## The transport seam
-
-HTTP is a single injectable function, so you can route through a proxy, add
-instrumentation or retries, or drive the client from a test double with no
-socket at all.
+All HTTP requests go through one function, `transport`. Replace it to add
+logging, route through a proxy, or use a test double.
 
 ```ts
-import { createHttpsTransport, httpsTransport, Pesepay, type Transport } from 'pesepay';
+import { httpsTransport, Pesepay, type Transport } from 'pesepay';
 
 const timed: Transport = async (request) => {
   const started = Date.now();
@@ -529,61 +480,49 @@ const timed: Transport = async (request) => {
   return response;
 };
 
-const strict = new Pesepay({
+const instrumented = new Pesepay({
   integrationKey: 'your-integration-key',
   encryptionKey: '0123456789abcdef0123456789abcdef',
-  transport: createHttpsTransport({ allowInsecureHttpParserFallback: false }),
+  transport: timed,
 });
 
-log.info(strict.baseUrl, timed);
+log.info(instrumented.baseUrl);
 ```
 
-> [!NOTE]
-> **Why this package does not use `fetch`.** `api.pesepay.com` emits a
-> `Strict-Transport-Security` header whose value contains a literal newline, so
-> its header block carries a bare LF where HTTP/1.1 requires CRLF. Node's strict
-> parser rejects every such response with `HPE_CR_EXPECTED`, and no `undici`
-> option relaxes it — a `fetch`-based SDK cannot talk to production at all.
->
-> This package tries the strict parser first and retries **once** with
-> `insecureHTTPParser` on a parse error only, replaying the body. That keeps
-> response-smuggling protection on by default, warns once per process when the
-> fallback is used, and self-heals the day the header is fixed. A timeout or a
-> refused connection is never retried. `createHttpsTransport({ allowInsecureHttpParserFallback: false })`
-> turns the fallback off if your policy forbids the lenient parser.
->
-> The real fix is one line of nginx on the gateway:
-> `add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;`
+`createHttpsTransport(options)` builds the default transport with options. See
+`HttpsTransportOptions` in your editor for details.
 
-The transport refuses to send your integration key over cleartext HTTP to
-anything but loopback.
+The default transport sends requests only over HTTPS. Plain HTTP is allowed
+only to loopback addresses such as `localhost`, for local testing.
 
 ## API
 
-| method | what it does |
+| method | returns |
 |---|---|
-| `initiateTransaction(options)` | creates a transaction; returns `referenceNumber`, `pollUrl`, `redirectUrl` |
-| `makeSeamlessPayment(options)` | charges a method directly; returns a `PaymentResult` |
-| `checkPayment(referenceNumber)` | reads a transaction's current state |
-| `pollTransaction(pollUrl)` | the same, from the URL the gateway handed back |
-| `initiateInvoice(options)` | creates an invoice; Pesepay emails the payer |
-| `checkInvoice(invoiceNumber)` | that invoice's payment, as a `PaymentResult` |
-| `getActiveCurrencies()` | currencies your account can transact in |
-| `getPaymentMethods(currencyCode)` | methods for one currency |
-| `getActivePaymentMethods()` | every active method, all currencies |
-| `parseCallback(body, headers?)` | decodes a `resultUrl` POST and verifies the key |
+| `initiateTransaction(options)` | `referenceNumber`, `pollUrl` and `redirectUrl` for a hosted payment |
+| `makeSeamlessPayment(options)` | a `PaymentResult` for a direct charge |
+| `checkPayment(referenceNumber)` | the transaction's current `PaymentResult` |
+| `pollTransaction(pollUrl)` | the same, looked up by `pollUrl` |
+| `initiateInvoice(options)` | the new invoice. Pesepay emails the payer. |
+| `checkInvoice(invoiceNumber)` | the invoice's `PaymentResult` |
+| `getActiveCurrencies()` | currencies your account can use |
+| `getPaymentMethods(currencyCode)` | payment methods for one currency |
+| `getActivePaymentMethods()` | payment methods for all currencies |
+| `parseCallback(body, headers?)` | the notification's `result`, `keyVerified` and `keyStatus` |
 
 Also exported: `TransactionStatus`, `isPaid`, `isTerminal`,
 `isTransactionStatus`, `TERMINAL_TRANSACTION_STATUSES`,
 `NON_TERMINAL_TRANSACTION_STATUSES`, `TRANSACTION_STATUS_CODES`,
 `TRANSACTION_STATUS_DESCRIPTIONS`, the seven error classes, `DEFAULT_BASE_URL`,
 `DEFAULT_TIMEOUT_MS`, `VERSION`, `createHttpsTransport`, `httpsTransport`, and
-the types for all of it.
+their types.
 
-The published type declarations keep their documentation, so your editor's hover
-is the full reference for every option and every field.
+Every option and field is documented in the type declarations, so your editor
+shows the details on hover.
 
-## Migrating from 1.x
+## Upgrading from 1.x
+
+Change one line and your 1.x code keeps working:
 
 ```js v1
 const { Pesepay } = require('pesepay');
@@ -595,22 +534,21 @@ becomes
 const { Pesepay } = require('pesepay/v1-compat');
 ```
 
-and nothing else changes. That compatibility layer reports only `paid`, though,
-so it cannot tell `PENDING` from `DECLINED` from `REVERSED` — it is a migration
-ramp, not a destination. **[MIGRATION.md](MIGRATION.md)** has the per-method
-before and after, and what the layer deliberately does not reproduce.
+The compatibility layer reports only `paid`, so it can't tell `PENDING` from
+`DECLINED` from `REVERSED`. Plan to move to the 2.x API. The
+[migration guide](https://github.com/codevirtus/pesepay-node/blob/main/MIGRATION.md)
+walks through each method.
 
 ## Contributing
 
 ```shell
 npm install
-npm run verify     # lint, typecheck, build, test, publint, are-the-types-wrong
+npm run verify     # lint, typecheck, build, test, package checks
 ```
 
-Every code block in this file is extracted and compiled against the built
-package by `test/docs/snippets.test.mts`, so a snippet that does not typecheck
-fails the build.
+Every code block in this README is compiled against the built package during
+`npm test`.
 
 ## Licence
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/codevirtus/pesepay-node/blob/main/LICENSE).

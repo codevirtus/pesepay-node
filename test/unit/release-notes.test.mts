@@ -18,7 +18,7 @@ describe('release notes — against the real CHANGELOG', () => {
   it('takes the 2.0.0 section and stops at the next release', () => {
     const notes = extractReleaseNotes(CHANGELOG, '2.0.0');
 
-    assert.equal(notes.date, '2026-09-11');
+    assert.equal(notes.date, '2026-09-29');
     assert.match(notes.body, /^A complete rewrite\./);
     assert.ok(notes.body.includes('### Breaking'));
     assert.ok(notes.body.includes('### Security'));

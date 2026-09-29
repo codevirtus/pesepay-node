@@ -224,7 +224,7 @@ describe('v1 compat — the response object', () => {
     ]);
   });
 
-  it('never carries a redirectUrl on a poll — the server has it commented out', async () => {
+  it('never carries a redirectUrl on a poll', async () => {
     const { pesepay } = harness(() =>
       envelope(200, { ...transactionResult(), redirectUrl: 'https://leaked.example' }),
     );

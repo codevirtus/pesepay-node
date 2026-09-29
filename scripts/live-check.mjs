@@ -1,9 +1,6 @@
 /**
- * The gateway, for real. Everything the unit suite cannot reach.
- *
- * All 279 tests run against `test/fixtures/raw-http-server.mts` — a byte-exact
- * reproduction of what we *believe* api.pesepay.com sends. This script is the
- * only thing that checks that belief against the server itself.
+ * Checks the built SDK against the real Pesepay API: everything the unit suite,
+ * which runs against local fixtures, cannot reach.
  *
  * Plain JavaScript, like scripts/smoke-installed.mjs, so it runs on the oldest
  * Node the `engines` field claims without type stripping.
@@ -91,7 +88,7 @@ if (CHECKING) {
     'the terminal status after a real payment',
     async () => {
       const result = await pesepay.checkPayment(CHECK_REF);
-      return `status ${result.status} (paid=${result.paid})`;
+      return `status ${result.transactionStatus} (paid=${result.paid})`;
     },
   );
   exit(failures === 0 ? 0 : 1);
@@ -99,20 +96,13 @@ if (CHECKING) {
 
 out(CREATE ? 'mode: --initiate (stage 4 creates a real transaction)' : 'mode: read-only');
 
-// The plain GET. If the bare-LF header block still breaks Node's strict parser,
-// this is where the insecureHTTPParser retry earns its place — and if the gateway
-// has since fixed its headers, this passes on the strict attempt and we can plan
-// to retire the workaround.
-await stage(
-  1,
-  'getActiveCurrencies()',
-  'TLS, the key header, the malformed-header retry',
-  async () => {
-    const currencies = await pesepay.getActiveCurrencies();
-    const codes = currencies.map((c) => c.code ?? c.currencyCode).filter(Boolean);
-    return `${currencies.length} currencies: ${codes.slice(0, 8).join(', ')}`;
-  },
-);
+// The plain GET: TLS and HTTP parsing, including the lenient-parser fallback if
+// it is needed.
+await stage(1, 'getActiveCurrencies()', 'TLS and HTTP response parsing', async () => {
+  const currencies = await pesepay.getActiveCurrencies();
+  const codes = currencies.map((c) => c.code ?? c.currencyCode).filter(Boolean);
+  return `${currencies.length} currencies: ${codes.slice(0, 8).join(', ')}`;
+});
 
 await stage(
   2,
@@ -147,7 +137,7 @@ await stage(
       if (error instanceof PesepayApiError) return `rejected as expected \u2014 ${describe(error)}`;
       throw error;
     }
-    throw new Error('the gateway ACCEPTED an unknown integration key');
+    throw new Error('the API ACCEPTED an unknown integration key');
   },
 );
 
@@ -183,7 +173,7 @@ if (CREATE) {
       'AES DECRYPT \u2014 we can read the server back',
       async () => {
         const result = await pesepay.checkPayment(reference);
-        return `status ${result.status} (paid=${result.paid})`;
+        return `status ${result.transactionStatus} (paid=${result.paid})`;
       },
     );
 

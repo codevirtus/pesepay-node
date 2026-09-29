@@ -2,11 +2,9 @@
  * `parseCallback` — the webhook path, and the only place in this SDK where the
  * SDK is the *server*.
  *
- * The gateway POSTs a plain, unencrypted `PaymentTransactionResult` to the
- * merchant's `resultUrl`, with no HMAC and no signature. The only credential is
- * an `Authorization` header holding the integration key verbatim, and the
- * gateway omits it entirely when its own key lookup fails — posting the body
- * anyway. So there are three outcomes, not two, and each has a test here:
+ * Pesepay POSTs a plain, unencrypted `PaymentTransactionResult` to the
+ * merchant's `resultUrl`, with the integration key in the `Authorization`
+ * header. There are three outcomes, not two, and each has a test here:
  *
  * | header | keyStatus | keyVerified |
  * |---|---|---|
@@ -16,8 +14,8 @@
  *
  * Two properties beyond the table matter:
  *
- * - **An absent header must not throw.** A webhook endpoint that crashes when
- *   Pesepay's key lookup fails is worse than one that records the fact.
+ * - **An absent header must not throw.** A webhook endpoint that crashes on a
+ *   missing header is worse than one that records the fact.
  * - **The comparison must not leak the key's length.** `timingSafeEqual`
  *   throws outright on unequal lengths, so the naive fix is a length check in
  *   front of it — which both short-circuits and answers "how long is the key?".
@@ -46,7 +44,7 @@ function pesepay(): InstanceType<typeof Pesepay> {
   });
 }
 
-/** Exactly what `PaymentTransactionResultPosterImpl` serialises and POSTs. */
+/** A callback body as Pesepay POSTs it. */
 function callbackBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     referenceNumber: REFERENCE,
@@ -97,10 +95,6 @@ describe('parseCallback — key verification', () => {
   });
 
   it('reports an absent header as absent rather than throwing', async () => {
-    // This is the case the gateway actually produces: when
-    // findIntegrationKeyForApplication throws RecordNotFoundException it logs a
-    // warning, skips the interceptor, and posts the body with no Authorization
-    // header at all.
     const { result, keyVerified, keyStatus } = pesepay().parseCallback(callbackBody(), {
       'content-type': 'application/json',
       'user-agent': 'Java/17.0.9',
@@ -451,17 +445,16 @@ describe('parseCallback — bodies that are not callbacks', () => {
     rejects(null, /it was null/);
   });
 
-  it('rejects an envelope, explaining that callbacks are never encrypted', () => {
+  it('rejects an envelope, explaining that callbacks are plain JSON', () => {
     // The natural mistake: every other payments endpoint is enveloped, so a
     // merchant proxying their webhook through something that re-wraps it would
     // otherwise see only "it has no referenceNumber".
-    rejects({ payload: 'IGdpYmJlcmlzaA==' }, /never\s+encrypted/);
+    rejects({ payload: 'IGdpYmJlcmlzaA==' }, /callbacks\s+are\s+plain\s+JSON/);
   });
 
   it('does not mistake a real result that happens to carry a payload field', () => {
     // The envelope check requires the payload to be the *only* key, so a
-    // gateway that one day adds a `payload` field to the result does not start
-    // being rejected.
+    // result that carries a `payload` field is not rejected.
     const { result } = pesepay().parseCallback(callbackBody({ payload: 'something' }));
     assert.equal(result.referenceNumber, REFERENCE);
   });

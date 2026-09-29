@@ -356,7 +356,7 @@ describe('Pesepay — what goes on the wire', () => {
     assert.equal(request.timeoutMs, DEFAULT_TIMEOUT_MS);
   });
 
-  it('sends the CreateTransactionCommand the server expects', async () => {
+  it('sends the transaction request the server expects', async () => {
     const { pesepay, sent } = harness(() => envelopeResponse(200, initiateResponse()));
 
     await pesepay.initiateTransaction({
@@ -372,8 +372,6 @@ describe('Pesepay — what goes on the wire', () => {
       amountDetails: { amount: 10.5, currencyCode: 'USD' },
       reasonForPayment: 'Order #1024',
       transactionType: 'BASIC',
-      // Explicitly present. A blank one is not rejected by the gateway — it is
-      // silently replaced with the string "NONE" and the result goes nowhere.
       resultUrl: RESULT_URL,
       returnUrl: RETURN_URL,
       merchantReference: 'ORDER-1024',
@@ -425,15 +423,11 @@ describe('Pesepay — what goes on the wire', () => {
 
     assert.ok(error instanceof PesepayConfigError);
     assert.match(error.message, /resultUrl is required/);
-    // The "NONE" substitution is the reason this is checked client-side at all.
-    assert.match(error.message, /NONE/);
+    assert.match(error.message, /pesepay\.resultUrl = /);
   });
 
   it('treats a blank resultUrl exactly like a missing one', async () => {
-    // The case the gateway is worst at: `""` and `"   "` are not rejected
-    // server-side, they become the string "NONE". So the client-side error has
-    // to explain that, not merely say the URL does not parse — v1's `== null`
-    // check let both of these straight through.
+    // v1's `== null` check let both of these straight through.
     for (const resultUrl of ['', '   ']) {
       const pesepay = new Pesepay(INTEGRATION_KEY, ENCRYPTION_KEY);
       pesepay.resultUrl = resultUrl;
@@ -445,7 +439,6 @@ describe('Pesepay — what goes on the wire', () => {
 
       assert.ok(error instanceof PesepayConfigError, `"${resultUrl}" should be rejected`);
       assert.match(error.message, /resultUrl is required/);
-      assert.match(error.message, /NONE/);
     }
   });
 
@@ -520,7 +513,6 @@ describe('Pesepay — seamless payment', () => {
       amountDetails: { amount: 10.5, currencyCode: 'USD' },
       reasonForPayment: 'Order #1024',
       paymentMethodCode: 'PZW211',
-      // Unconditional: the server dereferences this without a null check.
       customer: { email: 'buyer@example.com', phoneNumber: '0771111111', name: 'A Buyer' },
       resultUrl: RESULT_URL,
       returnUrl: RETURN_URL,
@@ -563,7 +555,7 @@ describe('Pesepay — seamless payment', () => {
     );
 
     assert.ok(error instanceof PesepayConfigError);
-    assert.match(error.message, /NullPointerException/);
+    assert.match(error.message, /email address, a phone number, or both/);
   });
 
   it('omits returnUrl entirely when there is none, letting the server default it', async () => {
@@ -653,7 +645,7 @@ describe('Pesepay — a failure body never reaches the decryptor', () => {
     assert.ok(!(error instanceof PesepayAuthError));
   });
 
-  it('keeps a generic 400 RuntimeException as an API error with the server text', async () => {
+  it('keeps a generic 400 as an API error with the server text', async () => {
     const { pesepay } = harness(() =>
       jsonResponse(400, { message: 'Reason for payment should be provided', status: 400 }),
     );
@@ -815,8 +807,7 @@ describe('Pesepay — round trip through a fake gateway', () => {
     assert.deepEqual(response, {
       referenceNumber: 'PSP-REF-0001',
       pollUrl: `${CHECK_URL}?referenceNumber=PSP-REF-0001`,
-      // Only ever available here — the server has the field on
-      // PaymentTransactionResult commented out.
+      // Only initiateTransaction returns this.
       redirectUrl: 'https://pay.pesepay.com/checkout/PSP-REF-0001',
     });
   });

@@ -1,36 +1,26 @@
 /**
- * The wire contract, read off the Java server in `pesepay-payments-engine`
- * rather than from v1's code or the public docs, both of which are incomplete.
- * Where the server and the documentation disagree, these types follow the
- * server.
+ * The Pesepay API's request and response shapes.
  *
- * `*Request` types are what you hand this package. `*Response` and `*Result`
- * types are decoded JSON from the gateway, so fields the server declares
- * nullable are optional here.
+ * `*Request` types are what this package sends. `*Response` and `*Result`
+ * types are decoded JSON from Pesepay, so fields that may be missing are
+ * optional here.
  *
  * Only the payment endpoints are encrypted: `/v1/payments/*` and
  * `/v2/payments/*` exchange {@link EncryptedEnvelope}, while currencies and
- * payment methods are plain JSON. Errors are always plain JSON either way.
+ * payment methods are plain JSON. Errors are always plain JSON.
  *
  * @packageDocumentation
  */
 
 import type { TransactionStatus } from './status.js';
 
-/**
- * The `{ "payload": "<base64>" }` wrapper the payment endpoints use in both
- * directions. The server calls it `TransactionDetailsHolder`.
- */
+/** The `{ "payload": "<base64>" }` wrapper the payment endpoints use in both directions. */
 export interface EncryptedEnvelope {
   /** Base64 AES-256-CBC ciphertext of a JSON document. */
   payload: string;
 }
 
-/**
- * The gateway's error body — plain JSON, never encrypted, which is why a failed
- * request is still reportable when the encryption key is the thing that is
- * wrong. `message` is genuinely nullable on the server.
- */
+/** An error response body. Plain JSON, never encrypted. */
 export interface PesepayErrorBody {
   timestamp?: string | null;
   message?: string | null;
@@ -39,17 +29,16 @@ export interface PesepayErrorBody {
 }
 
 export interface AmountRequest {
-  /** In major units — `10.5` is ten dollars fifty. */
+  /** In major units: `10.5` is ten dollars fifty. */
   amount: number;
-  /** As configured on your Pesepay account, e.g. `'USD'`. */
+  /** As configured on your Pesepay account, for example `'USD'`. */
   currencyCode: string;
 }
 
 /**
- * Amount details as returned by the gateway, which computes the fee split
- * rather than echoing what you sent. `amount` is what you asked for,
+ * Amount details as returned by Pesepay. `amount` is what you asked for,
  * `customerPayableAmount` what the customer is charged, and `merchantAmount`
- * what settles to you — reconcile against that one.
+ * what you receive. Reconcile against `merchantAmount`.
  */
 export interface AmountDetails {
   amount: number;
@@ -62,11 +51,7 @@ export interface AmountDetails {
   merchantAmount?: number;
 }
 
-/**
- * At least one of `email` or `phoneNumber` must be present, and the object
- * itself is not optional in practice: the server dereferences `customer`
- * without a null check, so omitting it yields a 500 NPE.
- */
+/** A seamless payment's customer. At least one of `email` or `phoneNumber` is required. */
 export interface CustomerDetails {
   email?: string;
   phoneNumber?: string;
@@ -75,54 +60,47 @@ export interface CustomerDetails {
 
 export type TransactionType = 'BASIC' | 'INVOICE';
 
-/**
- * Body of `POST /v1/payments/initiate`, before encryption. The server calls it
- * `CreateTransactionCommand`, and **silently substitutes the string `"NONE"`**
- * for a missing or blank `resultUrl`/`returnUrl` rather than rejecting it — so
- * a typo'd URL yields a transaction whose outcome you are never told.
- */
+/** Body of `POST /v1/payments/initiate`, before encryption. */
 export interface CreateTransactionRequest {
   amountDetails: AmountRequest;
   reasonForPayment: string;
-  /** Your own identifier, echoed back on the result. */
+  /** Your own identifier, returned on the result. */
   merchantReference?: string;
   transactionType?: TransactionType;
   resultUrl?: string;
   returnUrl?: string;
   /** Pre-selects a payment method, skipping the method picker. */
   paymentMethodCode?: string;
-  /** Echoed back as `transactionMetadata` on the result. */
+  /** Returned as `transactionMetadata` on the result. */
   paymentMetadata?: Record<string, string>;
 }
 
 /** Decrypted body of a successful `POST /v1/payments/initiate`. */
 export interface InitiateTransactionResponse {
   referenceNumber: string;
-  /** Already carries `?referenceNumber=…`. */
+  /** Already includes `?referenceNumber=…`. */
   pollUrl: string;
   /** Send the customer here to pay. */
   redirectUrl: string;
 }
 
 /**
- * Body of `POST /v2/payments/make-payment`, before encryption. The server calls
- * it `SeamlessPaymentContext`. "Seamless" means the customer never leaves your
- * site — you collect the payment details and the gateway charges directly — so
- * there is no `redirectUrl` in the response.
+ * Body of `POST /v2/payments/make-payment`, before encryption. The customer
+ * stays on your site, so there is no `redirectUrl` in the response.
  */
 export interface SeamlessPaymentRequest {
   amountDetails: AmountRequest;
   reasonForPayment: string;
   paymentMethodCode: string;
-  /** Required in practice — see {@link CustomerDetails}. */
+  /** Required. See {@link CustomerDetails}. */
   customer: CustomerDetails;
   merchantReference?: string;
   resultUrl?: string;
-  /** Defaults to `resultUrl` server-side when blank. */
+  /** Defaults to `resultUrl` when blank. */
   returnUrl?: string;
   /**
-   * Values for the fields {@link PaymentMethod.requiredFields} declares, keyed
-   * by the field's `name` — e.g. `{ customerPhoneNumber: '0771111111' }`.
+   * Values for the fields {@link PaymentMethod.requiredFields} lists, keyed by
+   * the field's `name`, for example `{ customerPhoneNumber: '0771111111' }`.
    */
   paymentMethodRequiredFields?: Record<string, string>;
   paymentMetadata?: Record<string, string>;
@@ -137,29 +115,27 @@ export interface SplitReversalResponse {
 }
 
 /**
- * The decrypted transaction result — payload of a poll, a check, a seamless
- * payment, and of the webhook POSTed to your `resultUrl`. The server calls it
- * `PaymentTransactionResult`.
+ * A transaction result: the response to a poll, a check or a seamless payment,
+ * and the body of the notification sent to your `resultUrl`.
  *
- * There is no `redirectUrl` here: the server declares one but has it commented
- * out, so it never reaches the wire. It exists only on
- * {@link InitiateTransactionResponse}.
+ * There is no `redirectUrl` here. Only {@link InitiateTransactionResponse}
+ * has one.
  */
 export interface PaymentTransactionResult {
   referenceNumber: string;
-  /** ISO-8601 as serialised by Jackson. */
+  /** ISO-8601. */
   dateOfTransaction?: string;
   applicationId?: number;
   applicationName?: string;
   amountDetails?: AmountDetails;
   reasonForPayment?: string;
   /**
-   * One of 17 values. Typed as the union *or* `string`, so a value the gateway
-   * adds before this package does is not a type error in your code. Compare
-   * with `isTerminal()` / `isPaid()`.
+   * One of 17 values. Typed as the union *or* `string`, so a status added
+   * later is not a type error in your code. Check it with `isTerminal()` and
+   * `isPaid()`.
    */
   transactionStatus: TransactionStatus | (string & Record<never, never>);
-  /** Not unique — `CLOSED` and `CLOSED_PERIOD_ELAPSED` are both `307`. */
+  /** Not unique: `CLOSED` and `CLOSED_PERIOD_ELAPSED` are both `307`. */
   transactionStatusCode?: number;
   transactionStatusDescription?: string;
   resultUrl?: string;
@@ -174,9 +150,9 @@ export type RequiredFieldType = 'TEXT' | 'NUMBER' | 'FILE' | 'DATE';
 
 /** One input a payment method needs before it can be charged. */
 export interface RequiredField {
-  /** Wire key — this is what belongs in `paymentMethodRequiredFields`. */
+  /** The key to use in `paymentMethodRequiredFields`. */
   name: string;
-  /** Human-facing label, for your UI rather than the wire. */
+  /** A label for your UI. */
   displayName?: string;
   fieldType?: RequiredFieldType;
   optional?: boolean;
@@ -199,21 +175,21 @@ export interface PaymentMethod {
   description?: string;
   /** The value to put in `paymentMethodCode`. */
   code: string;
-  /** Check the amount against these before calling the gateway. */
+  /** Check the amount against these before creating a payment. */
   maximumAmount?: number;
   minimumAmount?: number;
   /**
-   * When `true`, this method cannot be charged seamlessly — the customer must
-   * be sent to the hosted payment page.
+   * When `true`, this method can't be charged seamlessly: the customer must
+   * use Pesepay's payment page.
    */
   redirectRequired?: boolean;
   redirectURL?: string;
   active?: boolean;
-  /** What a seamless charge must collect. */
+  /** What a seamless payment must collect. */
   requiredFields?: RequiredField[];
   /** Currency codes this method accepts. */
   currencies?: string[];
-  /** Show this to the customer while the charge is in flight. */
+  /** Show this to the customer while the payment is in progress. */
   processingPaymentMessage?: string;
   imageFileName?: string;
 }
@@ -225,10 +201,7 @@ export type InvoiceStatus =
   | 'CANCELLED'
   | 'PAYMENT_CANCELED_BY_PAYER';
 
-/**
- * How often a recurring invoice is regenerated. `EVERY_YEARLY` is the server's
- * spelling, not a typo here.
- */
+/** How often a recurring invoice is reissued. `EVERY_YEARLY` is the API's spelling. */
 export type RecurringFrequency =
   | 'DAILY'
   | 'EVERY_MONTH'
@@ -238,11 +211,8 @@ export type RecurringFrequency =
   | 'EVERY_YEARLY';
 
 /**
- * Who the invoice is addressed to. `name` and `email` are both non-null columns
- * server-side, so neither is really optional; `phoneNumber` is.
- *
- * The payer is emailed the invoice, which is the difference between an invoice
- * and a plain transaction: Pesepay, not you, delivers the payment link.
+ * Who the invoice is addressed to. `name` and `email` are required;
+ * `phoneNumber` is optional. Pesepay emails the payment link to the payer.
  */
 export interface InvoicePayer {
   name: string;
@@ -251,70 +221,57 @@ export interface InvoicePayer {
 }
 
 /**
- * Body of `POST /v1/payments/invoice/initiate`, before encryption. The server
- * calls it `CreateInvoiceCommand`.
+ * Body of `POST /v1/payments/invoice/initiate`, before encryption.
  *
- * Two of these field names are traps:
- *
- * - **`currencyCode` is a string here but a `Currency` object on the response.**
- *   The Java field is `Currency currency` annotated `@JsonProperty("currencyCode")`
- *   with a deserialiser that looks the code up, so the request key is
- *   `currencyCode` and the reply key is `currency`.
- * - **Dates are `MM/dd/yyyy`**, not ISO-8601 — a custom `LocalDateDeserializer`,
- *   not Jackson's default. `2026-09-11` does not parse.
+ * - **`currencyCode` is a string here**, but the response has a full
+ *   `currency` object instead.
+ * - **Dates are `MM/DD/YYYY`**, not ISO-8601.
  */
 export interface CreateInvoiceRequest {
   payer: InvoicePayer;
   amount: number;
-  /** What the invoice is for. Shown to the payer. Rejected if it contains HTML. */
+  /** What the invoice is for. Shown to the payer. Must not contain HTML. */
   narrative: string;
-  /** Just the code — `'USD'`. See the note above about the asymmetry. */
+  /** Just the code, for example `'USD'`. */
   currencyCode: string;
-  /**
-   * Which of your applications the invoice belongs to. Required in practice:
-   * the server resolves the application from this field alone and never from
-   * the integration key.
-   */
+  /** The code of the application that owns the invoice. Required. */
   applicationCode?: string;
-  /** `MM/dd/yyyy`. When Pesepay should send the invoice to the payer. */
+  /** `MM/DD/YYYY`. When Pesepay should send the invoice to the payer. */
   processingDate: string;
-  /** `MM/dd/yyyy`. */
+  /** `MM/DD/YYYY`. */
   dueDate: string;
   recurringPayment?: boolean;
-  /** Required by the server whenever `recurringPayment` is `true`. */
+  /** Required when `recurringPayment` is `true`. */
   recurringFrequency?: RecurringFrequency;
   resultUrl?: string;
   returnUrl?: string;
-  /** Your own identifier. The server enforces that it is unique. */
+  /** Your own identifier. Must be unique. */
   initiatorReference?: string;
 }
 
 /**
- * The decrypted body of a successful `POST /v1/payments/invoice/initiate` — the
- * server's `Invoice` entity, serialised whole.
+ * The decrypted body of a successful `POST /v1/payments/invoice/initiate`.
  *
- * Because it is an entity rather than a purpose-built DTO, it carries more than
- * an invoice needs: JPA auditing columns, and a nested `application` object.
- * Only the fields worth relying on are named below; the rest survive as index
- * signature entries.
+ * The response carries more fields than are listed here; only the ones worth
+ * relying on are named, and the rest are kept under the index signature.
  */
 export interface Invoice {
   /**
-   * The invoice's identity everywhere else — it is the reference number the
-   * transaction is created under, and it is what `pollUrl` carries.
+   * The invoice's identifier. It is also the reference number of the payer's
+   * transaction, and it is what `pollUrl` looks up.
    */
   invoiceNumber: string;
-  /** Already carries `?invoiceNumber=…` — *not* `?referenceNumber=`. */
+  /** Includes `?invoiceNumber=…`, not `?referenceNumber=`. */
   pollUrl?: string;
   invoiceStatus?: InvoiceStatus;
-  /** Echoed back from the request. */
+  /** Returned from the request. */
   initiatorReference?: string;
   amount?: number;
   narrative?: string;
   /** The full currency record, not the code you sent. */
   currency?: Currency;
   payer?: InvoicePayer;
-  /** `MM/dd/yyyy`, the same format the request uses. */
+  /** `MM/DD/YYYY`, the same format the request uses. */
   processingDate?: string;
   dueDate?: string;
   recurringPayment?: boolean;
@@ -326,7 +283,7 @@ export interface Invoice {
   payerNotified?: boolean;
   resultUrl?: string;
   returnUrl?: string;
-  /** Opaque and encrypted server-side; not the `invoiceNumber`. */
+  /** An internal identifier. Not the `invoiceNumber`. */
   id?: string;
   [key: string]: unknown;
 }

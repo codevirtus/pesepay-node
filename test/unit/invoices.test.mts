@@ -90,7 +90,7 @@ function decryptRequest(request: TransportRequest): Record<string, unknown> {
   >;
 }
 
-/** The server's `Invoice` entity as it serialises back. */
+/** An invoice as Pesepay returns it. */
 function invoiceBody(overrides: Record<string, unknown> = {}): unknown {
   return {
     id: 'k3Ld9xQ2',
@@ -174,9 +174,8 @@ describe('initiateInvoice', () => {
   });
 
   it('sends the currency as `currencyCode`, a string, not a `currency` object', async () => {
-    // The Java field is `Currency currency` with @JsonProperty("currencyCode")
-    // and a code-lookup deserialiser, so the request key and the reply key
-    // differ. Sending `currency` gets it dropped and the invoice rejected.
+    // The request key is `currencyCode` and the reply key is `currency`.
+    // Sending `currency` gets the invoice rejected.
     let received: Record<string, unknown> | undefined;
 
     const { pesepay } = harness((request) => {
@@ -357,9 +356,9 @@ describe('initiateInvoice', () => {
       assert.equal(sent.length, 0, 'nothing should reach the transport');
     }
 
-    it('requires applicationCode, which the gateway answers 500 for', async () => {
+    it('requires applicationCode', async () => {
       await rejectsWith({ applicationCode: '' }, /applicationCode is required/);
-      await rejectsWith({ applicationCode: '   ' }, /rather than from your integration key/);
+      await rejectsWith({ applicationCode: '   ' }, /identifies the application/);
     });
 
     it('requires a payer with both a name and an email', async () => {
@@ -379,7 +378,7 @@ describe('initiateInvoice', () => {
       await rejectsWith({ amount: -5 }, /amount must be a positive/);
     });
 
-    it('requires a resultUrl, explaining the "NONE" substitution', async () => {
+    it('requires a resultUrl, before any request', async () => {
       const { pesepay, sent } = harness(() => envelopeResponse(200, invoiceBody()), {
         resultUrl: undefined,
       });
@@ -417,8 +416,7 @@ describe('initiateInvoice', () => {
 
     assert.equal(received?.recurringPayment, false);
     assert.equal('recurringFrequency' in (received ?? {}), false);
-    // Absent, not null: the server's @NotBlank validators treat them
-    // differently.
+    // Absent, not null.
     assert.equal('initiatorReference' in (received ?? {}), false);
   });
 

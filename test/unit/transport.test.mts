@@ -1,6 +1,6 @@
 /**
  * The strict → lenient HTTP parser fallback, against a raw `node:net` server
- * emitting the byte-exact bare-LF header block production sends.
+ * emitting a header block with a bare LF.
  *
  * Four cases carry the weight: a **premise guard** that Node's strict parser
  * really does reject that block (so the workaround can be retired when llhttp
@@ -148,8 +148,12 @@ describe('transport — fallback behaviour', () => {
 
     assert.equal(server.requests.length, 6, 'three calls, each retried once');
     assert.equal(warnings.length, 1, 'the warning must not repeat per request');
-    assert.match(warnings[0] ?? '', /HPE_CR_EXPECTED/);
-    assert.match(warnings[0] ?? '', /Strict-Transport-Security/, 'must name the server-side fix');
+    assert.match(warnings[0] ?? '', /insecureHTTPParser/);
+    assert.match(
+      warnings[0] ?? '',
+      /allowInsecureHttpParserFallback: false/,
+      'must say how to turn the fallback off',
+    );
   });
 
   it('replays the request body on the retry', async () => {

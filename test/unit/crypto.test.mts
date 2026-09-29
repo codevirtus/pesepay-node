@@ -1,8 +1,9 @@
 /**
- * AES interop against the Java gateway.
+ * AES interop with the Pesepay server's cipher.
  *
- * Every expected ciphertext in `java-vectors.json` was produced by the server's
- * own cipher path (`scripts/java/GenerateVectors.java`). They are never
+ * Every expected ciphertext in `java-vectors.json` was produced by a Java
+ * implementation of the server's cipher (`scripts/java/GenerateVectors.java`).
+ * They are never
  * regenerated from this implementation: a fixture written by the code under
  * test proves only self-consistency, which was never in doubt.
  */
@@ -39,7 +40,7 @@ const fixture: VectorFile = JSON.parse(
 
 const KEY = '3d2f8c1a4b6e7f905a1c2d3e4f506172';
 
-describe('crypto — interop with the Java gateway', () => {
+describe('crypto — interop with the Java cipher', () => {
   it('has vectors that really came from Java', () => {
     // Guards against someone "fixing" a failing vector by regenerating it here.
     assert.equal(fixture.algorithm.transformation, 'AES/CBC/PKCS5PADDING');
@@ -59,8 +60,8 @@ describe('crypto — interop with the Java gateway', () => {
 
   it('adds a whole padding block on an exact block multiple', () => {
     // The classic PKCS#7 mistake is padding only when there is a remainder,
-    // which yields 16 bytes here instead of 32 — and Java then rejects every
-    // payload whose length happens to be a multiple of 16.
+    // which yields 16 bytes here instead of 32, and the server then rejects
+    // every payload whose length happens to be a multiple of 16.
     const exact = fixture.vectors.find((v) => v.name === 'exact-one-block');
     assert.ok(exact, 'fixture must include an exact-block-multiple case');
     assert.equal(exact.plaintextByteLength, 16);
@@ -171,8 +172,7 @@ describe('crypto — key validation', () => {
   }
 
   it('rejects a non-ASCII key', () => {
-    // 32 characters, but Java's substring(0, 16) and a byte slice disagree on
-    // which bytes form the IV, so the two sides would silently desync.
+    // 32 characters, but not 32 bytes, so the two sides would disagree on the IV.
     const key = `é${'0'.repeat(31)}`;
     assert.equal(key.length, 32);
     assert.throws(() => crypto.assertValidEncryptionKey(key), errors.PesepayConfigError);

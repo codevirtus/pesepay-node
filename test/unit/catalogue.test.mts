@@ -12,8 +12,8 @@
  *    handing back an *enveloped* body and requiring it to be rejected rather
  *    than silently decrypted — a client that tried both would pass a naive
  *    round-trip test and this one catches it.
- * 3. **No credential is sent.** These paths are `permitAll()` on the gateway,
- *    so the integration key would buy nothing and is deliberately withheld.
+ * 3. **No credential is sent.** These endpoints are public, so the integration
+ *    key is deliberately withheld.
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
@@ -69,7 +69,7 @@ function jsonResponse(status: number, body: unknown): TransportResponse {
   };
 }
 
-/** As the gateway's `Currency` entity serialises, auditing columns included. */
+/** A currency record, including fields the SDK's types do not name. */
 const USD = {
   name: 'United States Dollar',
   description: 'US Dollar',
@@ -91,7 +91,7 @@ const ZWG = {
   active: true,
 };
 
-/** As the gateway's `PaymentMethod` entity serialises. */
+/** A payment method record. */
 const ECOCASH = {
   name: 'Ecocash',
   description: 'Ecocash mobile money',
@@ -110,9 +110,9 @@ const ECOCASH = {
       optional: false,
     },
   ],
-  // The entity leaks internal routing config. It must survive untouched rather
-  // than be dropped, but nothing in the SDK's types promises it.
-  reverseProxyName: 'ecocash-service',
+  // An extra field. It must survive untouched rather than be dropped, but
+  // nothing in the SDK's types promises it.
+  extraField: 'extra-value',
 };
 
 const VISA = {
@@ -154,7 +154,7 @@ describe('getActiveCurrencies', () => {
     assert.equal(sent[0]?.body, undefined);
   });
 
-  it('does not send the integration key to an endpoint that is permitAll()', async () => {
+  it('does not send the integration key to a public endpoint', async () => {
     const { pesepay, sent } = harness(() => jsonResponse(200, [USD]));
 
     await pesepay.getActiveCurrencies();
@@ -301,10 +301,7 @@ describe('getPaymentMethods', () => {
 
     const [ecocash] = await pesepay.getPaymentMethods('USD');
 
-    assert.equal(
-      (ecocash as unknown as Record<string, unknown>)?.reverseProxyName,
-      'ecocash-service',
-    );
+    assert.equal((ecocash as unknown as Record<string, unknown>)?.extraField, 'extra-value');
   });
 
   it('encodes a currency code through URL rather than concatenating it', async () => {
@@ -353,9 +350,7 @@ describe('getPaymentMethods', () => {
 
 describe('getActivePaymentMethods', () => {
   it('reads /v1/payment-methods/all-active, not /active', async () => {
-    // `/v1/payment-methods/active` is a different endpoint returning a reduced
-    // DTO with every redirect-required method filtered out — which would make
-    // cards silently invisible. This pins the path.
+    // Pins the path: the full list must include redirect-required methods.
     const { pesepay, sent } = harness(() => jsonResponse(200, [ECOCASH, VISA]));
 
     const methods = await pesepay.getActivePaymentMethods();
@@ -370,13 +365,11 @@ describe('getActivePaymentMethods', () => {
     );
   });
 
-  it('returns the full PaymentMethod shape, not the reduced DTO', async () => {
+  it('returns the full PaymentMethod shape', async () => {
     const { pesepay } = harness(() => jsonResponse(200, [ECOCASH]));
 
     const [ecocash] = await pesepay.getActivePaymentMethods();
 
-    // The reduced DTO has only name, code, acceptedCurrencies and
-    // required-field *names*. These four fields are how you tell them apart.
     assert.ok(ecocash !== undefined);
     assert.equal(typeof ecocash.minimumAmount, 'number');
     assert.equal(typeof ecocash.maximumAmount, 'number');

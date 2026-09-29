@@ -65,14 +65,11 @@ export {
   TransactionStatus,
 } from './status.js';
 /**
- * The wire types the gateway sends back, plus the two it accepts by name.
+ * The response types Pesepay returns.
  *
- * The `*Request` shapes — `CreateTransactionRequest`, `SeamlessPaymentRequest`,
- * `CreateInvoiceRequest` — and `EncryptedEnvelope` and `AmountRequest` are
- * deliberately **not** exported. No public method takes one; they are built
- * from the `*Options` types, and publishing them would advertise an input
- * format that is not an input, while pinning this package to the gateway's
- * request shape as a compatibility promise.
+ * The `*Request` shapes, `EncryptedEnvelope` and `AmountRequest` are internal:
+ * no public method takes one, since requests are built from the `*Options`
+ * types.
  */
 export type {
   AmountDetails,
@@ -93,4 +90,4 @@ export type {
 } from './types.js';
 
 /** The SDK version, as published to npm. */
-export const VERSION: string = '2.0.0-rc.1';
+export const VERSION: string = '2.0.0';

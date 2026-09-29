@@ -42,11 +42,7 @@ export class PesepayResponse {
   message?: string | undefined;
   referenceNumber?: string | undefined;
   pollUrl?: string | undefined;
-  /**
-   * Only ever set by {@link Pesepay.initiateTransaction}. The gateway declares
-   * a `redirectUrl` on transaction results but has it commented out, so v1's
-   * read of it on a poll or a check was always `undefined`.
-   */
+  /** Only set by {@link Pesepay.initiateTransaction}. */
   redirectUrl?: string | undefined;
   paid: boolean;
 
@@ -330,11 +326,8 @@ function fold(error: unknown): PesepayResponse {
 }
 
 /**
- * Narrows a v1 `Customer` to exactly the three fields the server declares.
- *
- * v1 serialised the customer object whole, so anything a caller had hung off it
- * went to the gateway too. Sending only the declared fields is the same
- * discipline the modern client applies to every other request.
+ * Narrows a v1 `Customer` to its three fields, so nothing else a caller added
+ * to the object is sent.
  */
 function toCustomerDetails(customer: Customer): CustomerDetails {
   return {

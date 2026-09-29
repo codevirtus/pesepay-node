@@ -1,14 +1,11 @@
 /**
  * The SDK's error hierarchy.
  *
- * Every failure this package raises extends {@link PesepayError}. v1 returned
- * `{ success: false, message }` for everything, which collapsed "your key is
- * wrong" and "the socket dropped" into one value; v2 throws instead.
+ * Every failure this package raises extends {@link PesepayError}.
  *
- * **No error here carries key material** — not in its message, its properties,
- * or its `cause`. Error objects reach log aggregators and issue trackers, so a
- * payments SDK that leaks credentials into them is the vulnerability. Keep that
- * property if you extend these classes.
+ * **No error here carries key material**, in its message, its properties or
+ * its `cause`, because errors end up in logs. Keep it that way if you extend
+ * these classes.
  *
  * @packageDocumentation
  */
@@ -40,10 +37,7 @@ export class PesepayError extends Error {
 
 export interface PesepayApiErrorInit {
   status: number;
-  /**
-   * The server's `message` field. Optional rather than defaulted, because the
-   * gateway genuinely sends `null` here.
-   */
+  /** The server's `message` field, when it sent one. */
   serverMessage?: string | undefined;
   description?: string | undefined;
   url?: string | undefined;
@@ -55,22 +49,16 @@ export interface PesepayApiErrorInit {
 const MAX_RETAINED_BODY = 2048;
 
 /**
- * The gateway returned a non-2xx status — or a 2xx whose body was not the
- * documented shape, which is reported the same way so the HTTP status stays
- * available on the error either way.
+ * Pesepay returned a non-2xx status, or a 2xx whose body was not the expected
+ * shape. The HTTP status is on the error either way.
  *
- * The status codes are not what you would guess, and these mappings are read
- * off the Java server:
- *
- * | status | what it actually means |
+ * | status | meaning |
  * |---|---|
- * | `400` | often just an unhandled server-side `RuntimeException` |
- * | `403` | the integration key exists but is disabled |
- * | `404` | the integration key is **unknown** — not "no such endpoint" |
- * | `500` | `"Failed to decrypt your data"` means your *encryption key* is wrong |
+ * | `403` | the integration key is disabled |
+ * | `404` | the integration key is not recognised (not a missing URL) |
+ * | `500` with `"Failed to decrypt your data"` | the encryption key is wrong |
  *
- * So "4xx is your fault, 5xx is worth retrying" is backwards here. Use
- * {@link isRetryable}, which encodes it.
+ * Use {@link isRetryable} to decide whether to try again.
  */
 export class PesepayApiError extends PesepayError {
   override readonly name: string = 'PesepayApiError';
@@ -96,8 +84,7 @@ export class PesepayApiError extends PesepayError {
 
   /**
    * `true` when repeating the request might succeed: `408`, `429`, and 5xx
-   * other than the decryption failure. A `403`/`404` is a key that will still
-   * be wrong in ten minutes, and retrying a key mismatch is a loop.
+   * other than an encryption key mismatch. Key problems won't fix themselves.
    */
   isRetryable(): boolean {
     if (this.status === 408 || this.status === 429) return true;
@@ -114,11 +101,7 @@ export class PesepayApiError extends PesepayError {
   }
 }
 
-/**
- * The integration key was rejected — the `403` (disabled) and `404` (unknown)
- * cases, so "my credentials are wrong" need not be recovered from a status code
- * that reads like something else.
- */
+/** The integration key was rejected: `403` (disabled) or `404` (not recognised). */
 export class PesepayAuthError extends PesepayApiError {
   override readonly name: string = 'PesepayAuthError';
   override readonly code: PesepayErrorCode = 'ERR_PESEPAY_AUTH';
@@ -129,13 +112,8 @@ export class PesepayAuthError extends PesepayApiError {
 }
 
 /**
- * Encryption or decryption failed — usually a key that does not match the one
- * Pesepay holds, a response altered in transit, or a key that is not 32 ASCII
- * characters.
- *
- * Deliberately fatal. Since CBC has no integrity protection, the padding check
- * is the only signal that the ciphertext is not what the server sent, and an
- * SDK returning a garbled `transactionStatus` is worse than one that refuses.
+ * Encryption or decryption failed: usually an encryption key that does not
+ * match the one Pesepay holds, or a response altered in transit. Not retryable.
  */
 export class PesepayCryptoError extends PesepayError {
   override readonly name: string = 'PesepayCryptoError';
@@ -154,10 +132,9 @@ export class PesepayNetworkError extends PesepayError {
 /**
  * The request exceeded its timeout.
  *
- * **A timeout is not a failed payment.** The gateway may have processed the
- * transaction and you simply did not hear back. Recover with
- * `checkPayment(referenceNumber)` — never by re-initiating, which risks
- * charging the customer twice.
+ * **A timeout is not a failed payment.** The payment may have gone through.
+ * Recover with `checkPayment(referenceNumber)`, never by retrying the payment,
+ * which could charge the customer twice.
  */
 export class PesepayTimeoutError extends PesepayNetworkError {
   override readonly name: string = 'PesepayTimeoutError';
@@ -172,11 +149,9 @@ export class PesepayTimeoutError extends PesepayNetworkError {
 }
 
 /**
- * The SDK was configured or called wrongly — a missing or malformed key, an
- * absent `resultUrl`, a non-https base URL, a negative amount, a seamless
- * payment with no customer. Thrown eagerly, before any network call: none of
- * these are fixable at runtime, and failing at construction (or at the top of
- * the method) is cheaper than failing mid-checkout.
+ * The SDK was configured or called incorrectly: a missing or malformed key, a
+ * missing `resultUrl`, a non-https base URL, a negative amount, a seamless
+ * payment with no customer. Always thrown before any request is sent.
  */
 export class PesepayConfigError extends PesepayError {
   override readonly name: string = 'PesepayConfigError';

@@ -44,9 +44,8 @@ jobs:
             echo "dist_tag=$dist_tag"
           } >> "$GITHUB_OUTPUT"
 
-      # MIGRATION.md tells 1.x users to install pesepay@v1, and `latest` moving
-      # to 2.x is what makes that the only honest escape hatch. The tag has to
-      # exist before it is needed, not after.
+      # Once `latest` moves to 2.x, the v1 dist-tag is how 1.x users find 1.0.4
+      # by name. The tag has to exist before it is needed, not after.
       - name: 1.0.4 must already be reachable as @v1
         if: steps.version.outputs.dist_tag == 'latest'
         run: |

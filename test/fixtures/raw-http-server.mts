@@ -25,12 +25,11 @@ export interface RawHttpServer {
 }
 
 /**
- * A byte-exact reproduction of the header block `api.pesepay.com` emits.
+ * A response that Node's strict HTTP parser rejects.
  *
- * Note the lone `\n` after `max-age=31536000;` where HTTP/1.1 requires `\r\n`.
- * That single byte is the entire bug: llhttp reports `HPE_CR_EXPECTED` and
- * undici "Missing expected CR after header value". Written as explicit escapes
- * so no editor or `.gitattributes` rule can quietly repair it.
+ * Note the lone `\n` after `max-age=31536000;` where HTTP/1.1 requires `\r\n`:
+ * llhttp reports `HPE_CR_EXPECTED`. Written as explicit escapes so no editor or
+ * `.gitattributes` rule can quietly repair it.
  */
 export function malformedResponse(body: string): string {
   const length = Buffer.byteLength(body, 'utf8');

@@ -1,7 +1,6 @@
 /**
- * Transaction statuses, checked against the gateway's own enum. Mostly guards
- * the transcription from `TransactionStatus.java` — and the one place where the
- * obvious approach is wrong.
+ * Transaction statuses. Mostly guards the transcription of Pesepay's status
+ * list, and the one place where the obvious approach is wrong.
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';

@@ -32,3 +32,6 @@ Thumbs.db
 
 # Markdown snippets, extracted for typechecking
 /test/docs/generated/
+
+# Internal build notes
+PROGRESS.md

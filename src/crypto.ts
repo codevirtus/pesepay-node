@@ -1,32 +1,7 @@
 /**
- * Payload encryption, matching the Pesepay server byte for byte.
- *
- * | | |
- * |---|---|
- * | cipher | `AES-256-CBC` (`AES/CBC/PKCS5PADDING` on the server) |
- * | key | the encryption key's 32 UTF-8 bytes, used directly — no KDF |
- * | IV | **the first 16 characters of that same key** |
- * | padding | PKCS#7 |
- * | encoding | standard base64, with `=` padding — not base64url |
- *
- * Two consequences worth being clear-eyed about:
- *
- * **The IV is derived from the key, so it is constant** — identical plaintext
- * always yields identical ciphertext, leaking equality between payloads. That
- * is the gateway's protocol, not a choice available here: the server derives
- * the IV the same way, so a random IV would simply fail to decrypt.
- *
- * **CBC has no integrity protection.** The PKCS#7 padding check is the only
- * thing between a corrupted response and a garbage `transactionStatus`, so
- * {@link decryptPayload} treats every failure as fatal.
- *
- * ## Why the key must be 32 ASCII characters
- *
- * The server derives the IV with `key.substring(0, 16)` — **UTF-16
- * characters**; this module slices **bytes**. Identical for ASCII, different
- * for anything else, and the two sides would then encrypt under different IVs,
- * producing plausible-looking garbage in the first block and correct data
- * afterwards. Real keys are 32-character hex UUIDs, so the check costs nothing.
+ * Payload encryption for the Pesepay payment endpoints: AES-256-CBC with
+ * PKCS#7 padding and standard base64, keyed by the 32-character encryption
+ * key. Any decryption failure is treated as fatal.
  *
  * @packageDocumentation
  */
@@ -64,11 +39,7 @@ export function assertValidEncryptionKey(key: string, label = 'encryptionKey'): 
   for (let i = 0; i < key.length; i++) {
     if (key.charCodeAt(i) > 0x7f) {
       throw new PesepayConfigError(
-        `${label} must contain only ASCII characters, but character ${i + 1} is not ASCII. ` +
-          'The gateway derives the AES initialisation vector from the first 16 ' +
-          'characters of the key, and does so by character while this SDK does so ' +
-          'by byte — a non-ASCII key makes the two disagree and every payload ' +
-          'decrypt to garbage.',
+        `${label} must contain only ASCII characters, but character ${i + 1} is not ASCII.`,
       );
     }
   }
@@ -132,8 +103,7 @@ export function decryptPayload(key: string, ciphertextBase64: string): string {
     const decipher = createDecipheriv(ALGORITHM, keyBytes(key), ivBytes(key));
     plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
   } catch {
-    // The padding check is CBC's only integrity signal, so this is the branch
-    // that catches a wrong key or a tampered response.
+    // A wrong key or an altered response fails the padding check here.
     throw new PesepayCryptoError(
       'Failed to decrypt the gateway payload. The encryption key does not match ' +
         'the one registered for this integration key, or the response was altered ' +
